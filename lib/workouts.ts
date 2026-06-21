@@ -1,5 +1,8 @@
 // Data transcribed directly from "Beginner Calisthenics Program" PDF.
 
+// Movement types the camera rep-counter knows how to detect.
+export type CameraMove = "pushup" | "squat" | "lunge" | "legraise" | "calf";
+
 export type Exercise = {
   name: string;
   sets: number;
@@ -7,8 +10,8 @@ export type Exercise = {
   target: string;
   /** If set, this exercise is timed (a hold). Number of seconds to count down per set. */
   holdSeconds?: number;
-  /** If true, offer the camera-based rep counter (elbow-angle pushup detection). */
-  camera?: boolean;
+  /** If set, offer the camera rep counter using this movement's pose detector. */
+  cameraMove?: CameraMove;
   notes: string;
 };
 
@@ -34,11 +37,11 @@ export const upperA: Workout = {
     {
       title: "Aesthetic Focus",
       exercises: [
-        { name: "Incline Pushups", sets: 3, target: "10–15", camera: true, notes: "Target the lower chest." },
-        { name: "Decline Pushups", sets: 3, target: "10–15", camera: true, notes: "Target the upper chest — increase the angle for difficulty." },
-        { name: "Diamond Pushups", sets: 3, target: "10–15", camera: true, notes: "Target the triceps, as well as your inner chest." },
-        { name: "Pike Pushups", sets: 3, target: "6–10", camera: true, notes: "Help to build massive shoulders." },
-        { name: "Archer Pushups", sets: 2, target: "6–10", camera: true, notes: "Combine everything — main purpose is improving stability and unilateral strength (like a one-arm pushup)." },
+        { name: "Incline Pushups", sets: 3, target: "10–15", cameraMove: "pushup", notes: "Target the lower chest." },
+        { name: "Decline Pushups", sets: 3, target: "10–15", cameraMove: "pushup", notes: "Target the upper chest — increase the angle for difficulty." },
+        { name: "Diamond Pushups", sets: 3, target: "10–15", cameraMove: "pushup", notes: "Target the triceps, as well as your inner chest." },
+        { name: "Pike Pushups", sets: 3, target: "6–10", cameraMove: "pushup", notes: "Help to build massive shoulders." },
+        { name: "Archer Pushups", sets: 2, target: "6–10", cameraMove: "pushup", notes: "Combine everything — main purpose is improving stability and unilateral strength (like a one-arm pushup)." },
       ],
     },
   ],
@@ -54,10 +57,10 @@ export const upperB: Workout = {
     {
       title: "Upper Body",
       exercises: [
-        { name: "Pushups", sets: 3, target: "Max reps", camera: true, notes: "The base exercise for almost everything — build strength and endurance here!" },
+        { name: "Pushups", sets: 3, target: "Max reps", cameraMove: "pushup", notes: "The base exercise for almost everything — build strength and endurance here!" },
         { name: "Planche Leans", sets: 3, target: "10–20 sec", holdSeconds: 20, notes: "Helps your shoulders manage higher torque when doing more advanced exercises." },
-        { name: "Pike Pushups", sets: 3, target: "5–10", camera: true, notes: "Build strength for the handstand pushup." },
-        { name: "Dips", sets: 3, target: "6–10", camera: true, notes: "Give you even more strength in the lower chest, triceps and shoulders." },
+        { name: "Pike Pushups", sets: 3, target: "5–10", cameraMove: "pushup", notes: "Build strength for the handstand pushup." },
+        { name: "Dips", sets: 3, target: "6–10", cameraMove: "pushup", notes: "Give you even more strength in the lower chest, triceps and shoulders." },
       ],
     },
   ],
@@ -74,15 +77,15 @@ export const legsAbs: Workout = {
       exercises: [
         { name: "Hollow Body Hold", sets: 3, target: "20–40 sec", holdSeconds: 30, notes: "Builds core tension and teaches you to keep your body straight and tight — essential for almost every skill (planche, handstand, front lever)." },
         { name: "L-Sit (or progression)", sets: 3, target: "10–15 sec", holdSeconds: 12, notes: "Develops strong abs & hip flexors." },
-        { name: "Lying Leg Raises", sets: 3, target: "10", notes: "Build lower abs and core strength." },
+        { name: "Lying Leg Raises", sets: 3, target: "10", cameraMove: "legraise", notes: "Build lower abs and core strength." },
       ],
     },
     {
       title: "Legs",
       exercises: [
-        { name: "Bodyweight Squats", sets: 3, target: "12–20", notes: "Build overall leg strength — mainly quads." },
-        { name: "Lunges", sets: 3, target: "10/leg", notes: "Improve stability and fix strength imbalances between legs." },
-        { name: "Calf Raises", sets: 3, target: "15–20", notes: "Build your calf muscles." },
+        { name: "Bodyweight Squats", sets: 3, target: "12–20", cameraMove: "squat", notes: "Build overall leg strength — mainly quads." },
+        { name: "Lunges", sets: 3, target: "10/leg", cameraMove: "lunge", notes: "Improve stability and fix strength imbalances between legs." },
+        { name: "Calf Raises", sets: 3, target: "15–20", cameraMove: "calf", notes: "Build your calf muscles." },
       ],
     },
   ],

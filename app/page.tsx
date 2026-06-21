@@ -448,7 +448,7 @@ function WorkView({
   beep: (f?: number) => void;
 }) {
   const isTimed = !!step.exercise.holdSeconds;
-  const hasCamera = !!step.exercise.camera;
+  const hasCamera = !!step.exercise.cameraMove;
   const [started, setStarted] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
   const [countedReps, setCountedReps] = useState<number | null>(null);
@@ -564,6 +564,7 @@ function WorkView({
         <PushupCamera
           exerciseName={step.exercise.name}
           target={step.exercise.target}
+          move={step.exercise.cameraMove!}
           onClose={() => setShowCamera(false)}
           onUseCount={(reps) => {
             setCountedReps(reps);
