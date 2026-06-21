@@ -13,6 +13,8 @@ import {
 
 // Camera + pose model are heavy and browser-only — load on demand.
 const PushupCamera = dynamic(() => import("./PushupCamera"), { ssr: false });
+// Music player is client-only (Spotify iframe).
+const MusicPlayer = dynamic(() => import("./MusicPlayer"), { ssr: false });
 
 /* ------------------------------------------------------------------ */
 /* Sound                                                              */
@@ -675,8 +677,15 @@ export default function Page() {
     };
   }, [activeId]);
 
-  if (activeId && workouts[activeId]) {
-    return <Runner workout={workouts[activeId]} onExit={() => setActiveId(null)} />;
-  }
-  return <Home onStart={setActiveId} />;
+  return (
+    <>
+      {activeId && workouts[activeId] ? (
+        <Runner workout={workouts[activeId]} onExit={() => setActiveId(null)} />
+      ) : (
+        <Home onStart={setActiveId} />
+      )}
+      {/* Persistent across views so music keeps playing into a session */}
+      <MusicPlayer />
+    </>
+  );
 }
