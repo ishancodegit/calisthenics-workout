@@ -2,36 +2,53 @@
 
 import { useEffect, useState } from "react";
 
-// Default: Spotify's "Beast Mode" workout playlist.
-const DEFAULT_EMBED =
-  "https://open.spotify.com/embed/playlist/37i9dQZF1DX76Wlfdnj7AP?utm_source=generator";
-const KEY = "calisthenics-music-v1";
+// Default: a YouTube "Workout Playlist 2026" mix (full songs, free, no login).
+const DEFAULT_LIST = "PLCULndnUE-_qfnkg7uOUxvCEDa4er9l8O";
+const DEFAULT_EMBED = `https://www.youtube.com/embed/videoseries?list=${DEFAULT_LIST}&rel=0&modestbranding=1`;
+const KEY = "calisthenics-music-yt-v1";
 
-const TYPES = ["playlist", "album", "track", "artist", "show", "episode"];
-
-// Convert any Spotify link / URI into an embeddable URL.
-function toEmbed(url: string): string | null {
+// Convert any YouTube link / id into an embeddable URL.
+function toYouTubeEmbed(url: string): string | null {
   const raw = url.trim();
   if (!raw) return null;
+
+  const buildList = (listId: string, videoId?: string) =>
+    videoId
+      ? `https://www.youtube.com/embed/${videoId}?list=${listId}&rel=0&modestbranding=1`
+      : `https://www.youtube.com/embed/videoseries?list=${listId}&rel=0&modestbranding=1`;
+  const buildVideo = (videoId: string) =>
+    `https://www.youtube.com/embed/${videoId}?rel=0&modestbranding=1`;
+
   try {
-    if (raw.startsWith("spotify:")) {
-      const [, type, id] = raw.split(":");
-      if (TYPES.includes(type) && id)
-        return `https://open.spotify.com/embed/${type}/${id}?utm_source=generator`;
-      return null;
+    const u = new URL(raw.includes("://") ? raw : `https://${raw}`);
+    const host = u.hostname.replace(/^www\./, "").replace(/^music\./, "");
+    const listId = u.searchParams.get("list") || "";
+    let videoId = "";
+
+    if (host === "youtu.be") {
+      videoId = u.pathname.slice(1);
+    } else if (host.endsWith("youtube.com")) {
+      if (u.pathname === "/watch") videoId = u.searchParams.get("v") || "";
+      else if (u.pathname.startsWith("/shorts/"))
+        videoId = u.pathname.split("/")[2] || "";
+      else if (u.pathname.startsWith("/embed/")) {
+        const seg = u.pathname.split("/")[2] || "";
+        if (seg && seg !== "videoseries") videoId = seg;
+      }
+      // /playlist -> list only
+    } else {
+      return null; // not a YouTube host
     }
-    const u = new URL(raw);
-    if (!u.hostname.includes("spotify.com")) return null;
-    const parts = u.pathname.split("/").filter(Boolean); // handles /embed and /intl-xx
-    const idx = parts.findIndex((p) => TYPES.includes(p));
-    if (idx >= 0 && parts[idx + 1]) {
-      const id = parts[idx + 1].split("?")[0];
-      return `https://open.spotify.com/embed/${parts[idx]}/${id}?utm_source=generator`;
-    }
+
+    if (listId) return buildList(listId, videoId || undefined);
+    if (videoId) return buildVideo(videoId);
+    return null;
   } catch {
-    /* not a URL */
+    // bare ids pasted directly
+    if (/^[A-Za-z0-9_-]{11}$/.test(raw)) return buildVideo(raw);
+    if (/^(PL|RD|UU|LL|FL|OL)[A-Za-z0-9_-]+$/.test(raw)) return buildList(raw);
+    return null;
   }
-  return null;
 }
 
 export default function MusicPlayer() {
@@ -46,9 +63,9 @@ export default function MusicPlayer() {
   }, []);
 
   function apply() {
-    const e = toEmbed(input);
+    const e = toYouTubeEmbed(input);
     if (!e) {
-      setErr("Paste a Spotify playlist, album, or track link.");
+      setErr("Paste a YouTube video or playlist link.");
       return;
     }
     setEmbed(e);
@@ -73,22 +90,25 @@ export default function MusicPlayer() {
             : "pointer-events-none translate-y-2 scale-95 opacity-0"
         }`}
       >
-        <iframe
-          title="Spotify player"
-          src={embed}
-          width="100%"
-          height={152}
-          frameBorder={0}
-          allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-          loading="lazy"
-          className="rounded-xl"
-        />
+        <div className="aspect-video w-full overflow-hidden rounded-xl bg-black">
+          <iframe
+            title="YouTube music player"
+            src={embed}
+            width="100%"
+            height="100%"
+            frameBorder={0}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allowFullScreen
+            loading="lazy"
+            className="h-full w-full"
+          />
+        </div>
         <div className="mt-2 flex gap-2">
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && apply()}
-            placeholder="Paste a Spotify link…"
+            placeholder="Paste a YouTube link…"
             className="min-w-0 flex-1 rounded-lg bg-white/5 px-3 py-2 text-sm outline-none ring-1 ring-white/10 placeholder:text-white/30 focus:ring-[var(--accent)]/60"
           />
           <button
@@ -105,7 +125,7 @@ export default function MusicPlayer() {
             onClick={resetDefault}
             className="mt-1 text-xs text-white/40 hover:text-white/70"
           >
-            Reset to Beast Mode
+            Reset to default mix
           </button>
         )}
       </div>

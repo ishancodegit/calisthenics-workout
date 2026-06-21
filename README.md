@@ -8,7 +8,7 @@ A personal workout runner built from the *Beginner Calisthenics Program* PDF. Bl
 - **Guided runner** — step through every set with target reps and form notes.
 - **Timers for every exercise** — auto rest timer between sets (30/45/60/90/120s) with a countdown ring + beeps; dedicated hold countdowns for timed exercises (Planche Leans, Hollow Body Hold, L-Sit).
 - **Camera rep counter** — on pushup-family exercises, tap "📷 Verify reps with camera" to auto-count reps with on-device pose detection (MediaPipe Pose). It counts **down** from your rep goal, tracks your elbow angle, and **auto-calibrates to your range of motion** each set so incline/decline/pike/dips all count correctly. Beeps per rep, shows a live skeleton overlay, and runs entirely in your browser — no video leaves your device. Needs HTTPS (Vercel provides it) and camera permission; works best from a side angle.
-- **Music** — floating Spotify player (defaults to the Beast Mode playlist). Paste any Spotify playlist/album/track link to swap it (remembered in your browser). Stays playing as you move from the home screen into a workout.
+- **Music** — floating YouTube player (defaults to a workout mix) that plays full-length songs for free, no login. Paste any YouTube video or playlist link to swap it (remembered in your browser). Stays playing as you move from the home screen into a workout.
 - **Progress log** — sessions saved in your browser (localStorage); home screen shows weekly count and last-done dates.
 - **Weekly split + tips** from the PDF on the home screen.
 - Screen-wake-lock during a session (where supported), mobile-friendly.
