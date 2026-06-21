@@ -34,4 +34,23 @@ vercel --prod # production
 
 Option B — Git: push this folder to a GitHub repo, then "Import Project" on vercel.com. Framework preset auto-detects **Next.js** — no config needed.
 
-Built with Next.js 15 + Tailwind CSS v4. No backend, no env vars.
+## Spotify full-track playback (optional)
+
+The Music panel has a **Spotify** tab that plays full songs (not 30s previews)
+via the Web Playback SDK. This requires a **Spotify Premium** account to log in
+with, plus a free one-time setup:
+
+1. Go to <https://developer.spotify.com/dashboard> → **Create app**.
+2. Name/description: anything. **Redirect URIs** — add both (with trailing slash):
+   - `https://ishansworkout.vercel.app/`  (production)
+   - `http://127.0.0.1:3000/`  (local dev — use `127.0.0.1`, not `localhost`)
+3. Under "Which API/SDKs are you planning to use" tick **Web Playback SDK** and **Web API**. Save.
+4. Copy the **Client ID**.
+5. Set it as an env var named `NEXT_PUBLIC_SPOTIFY_CLIENT_ID`:
+   - Local: create `.env.local` with `NEXT_PUBLIC_SPOTIFY_CLIENT_ID=your_id`
+   - Vercel: `vercel env add NEXT_PUBLIC_SPOTIFY_CLIENT_ID` (Production), then redeploy.
+
+Auth is Authorization Code + PKCE — fully client-side, no secret/backend. The
+Client ID is public, so it's safe in the browser.
+
+Built with Next.js 15 + Tailwind CSS v4. No backend.
