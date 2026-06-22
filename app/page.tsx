@@ -10,11 +10,13 @@ import {
   type Workout,
   type SetStep,
 } from "@/lib/workouts";
+import { decodeChallenge, type Challenge } from "@/lib/challenge";
 
 // Camera + pose model are heavy and browser-only — load on demand.
 const PushupCamera = dynamic(() => import("./PushupCamera"), { ssr: false });
 // Music player is client-only (Spotify iframe).
 const MusicPlayer = dynamic(() => import("./MusicPlayer"), { ssr: false });
+const ChallengeView = dynamic(() => import("./Challenge"), { ssr: false });
 
 /* ------------------------------------------------------------------ */
 /* Sound                                                              */
@@ -167,7 +169,13 @@ function fmt(secs: number) {
 /* ------------------------------------------------------------------ */
 /* Home                                                                */
 /* ------------------------------------------------------------------ */
-function Home({ onStart }: { onStart: (id: string) => void }) {
+function Home({
+  onStart,
+  onChallenge,
+}: {
+  onStart: (id: string) => void;
+  onChallenge: () => void;
+}) {
   const [log, setLog] = useState<LogEntry[]>([]);
   useEffect(() => setLog(loadLog()), []);
 
@@ -196,6 +204,20 @@ function Home({ onStart }: { onStart: (id: string) => void }) {
           {countThisWeek} workout{countThisWeek === 1 ? "" : "s"} logged this week
         </p>
       </div>
+
+      {/* Challenge CTA */}
+      <button
+        onClick={onChallenge}
+        className="mt-4 flex w-full items-center justify-between rounded-2xl bg-[var(--accent)] p-5 text-left text-black transition active:scale-[0.99]"
+      >
+        <span>
+          <span className="block text-lg font-black">💪 Pushup Challenge</span>
+          <span className="block text-sm font-medium text-black/70">
+            Max pushups vs friends — share a link
+          </span>
+        </span>
+        <span className="text-2xl font-black">▸</span>
+      </button>
 
       {/* Pick a session */}
       <div className="mt-8">
@@ -658,6 +680,23 @@ function RestView({
 /* ------------------------------------------------------------------ */
 export default function Page() {
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [challenge, setChallenge] = useState(false);
+  const [incoming, setIncoming] = useState<Challenge | null>(null);
+
+  // Open the challenge directly from a shared ?c= link.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const c = url.searchParams.get("c");
+    if (c) {
+      const decoded = decodeChallenge(c);
+      if (decoded) {
+        setIncoming(decoded);
+        setChallenge(true);
+      }
+      url.searchParams.delete("c");
+      window.history.replaceState({}, "", url.pathname);
+    }
+  }, []);
 
   // keep screen awake during a session if supported
   useEffect(() => {
@@ -680,10 +719,18 @@ export default function Page() {
 
   return (
     <>
-      {activeId && workouts[activeId] ? (
+      {challenge ? (
+        <ChallengeView
+          incoming={incoming}
+          onClose={() => {
+            setChallenge(false);
+            setIncoming(null);
+          }}
+        />
+      ) : activeId && workouts[activeId] ? (
         <Runner workout={workouts[activeId]} onExit={() => setActiveId(null)} />
       ) : (
-        <Home onStart={setActiveId} />
+        <Home onStart={setActiveId} onChallenge={() => setChallenge(true)} />
       )}
       {/* Persistent across views so music keeps playing into a session */}
       <MusicPlayer />

@@ -5,10 +5,10 @@ import type { CameraMove } from "@/lib/workouts";
 
 const WASM_URL =
   "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.18/wasm";
+// "full" model — more accurate landmarks than "lite", for better form checks.
 const MODEL_URL =
-  "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
+  "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task";
 
-// MediaPipe Pose landmark indices
 const LM = {
   lShoulder: 11, rShoulder: 12,
   lElbow: 13, rElbow: 14,
@@ -20,9 +20,6 @@ const LM = {
 
 type Pt = { x: number; y: number; visibility?: number };
 
-// Per-move config: the joint triples whose angle we track, how to aggregate
-// both sides, the skeleton segments to draw, a framing cue, and the minimum
-// range of motion (degrees for angles, normalized units for vertical moves).
 const MOVES: Record<
   CameraMove,
   {
@@ -38,8 +35,8 @@ const MOVES: Record<
     kind: "angle",
     joints: [[LM.lShoulder, LM.lElbow, LM.lWrist], [LM.rShoulder, LM.rElbow, LM.rWrist]],
     agg: "avg",
-    segments: [[LM.lShoulder, LM.rShoulder], [LM.lShoulder, LM.lElbow], [LM.lElbow, LM.lWrist], [LM.rShoulder, LM.rElbow], [LM.rElbow, LM.rWrist]],
-    cue: "Side angle — shoulders & arms in frame",
+    segments: [[LM.lShoulder, LM.rShoulder], [LM.lShoulder, LM.lElbow], [LM.lElbow, LM.lWrist], [LM.rShoulder, LM.rElbow], [LM.rElbow, LM.rWrist], [LM.lShoulder, LM.lHip], [LM.lHip, LM.lKnee], [LM.rShoulder, LM.rHip], [LM.rHip, LM.rKnee]],
+    cue: "Side angle — whole body in frame",
     minRange: 30,
   },
   squat: {
@@ -53,7 +50,7 @@ const MOVES: Record<
   lunge: {
     kind: "angle",
     joints: [[LM.lHip, LM.lKnee, LM.lAnkle], [LM.rHip, LM.rKnee, LM.rAnkle]],
-    agg: "min", // the front (bending) leg drives the rep
+    agg: "min",
     segments: [[LM.lHip, LM.rHip], [LM.lHip, LM.lKnee], [LM.lKnee, LM.lAnkle], [LM.rHip, LM.rKnee], [LM.rKnee, LM.rAnkle]],
     cue: "Side-on — whole body in frame",
     minRange: 35,
@@ -72,9 +69,15 @@ const MOVES: Record<
     agg: "avg",
     segments: [[LM.lShoulder, LM.lHip], [LM.lHip, LM.lKnee], [LM.lKnee, LM.lAnkle], [LM.rShoulder, LM.rHip], [LM.rHip, LM.rKnee], [LM.rKnee, LM.rAnkle]],
     cue: "Stand facing the camera — whole body in frame",
-    minRange: 0.018, // normalized vertical travel of the shoulders
+    minRange: 0.018,
   },
 };
+
+// Absolute form standards for a "perfect" pushup (degrees).
+const PUSH_DOWN_ENTER = 110; // begin tracking the descent below this
+const PUSH_UP_EXIT = 150; // count the rep once locked out above this
+const PUSH_DEPTH = 100; // bottom must reach at/below this (chest low)
+const PUSH_STRAIGHT = 158; // hip line must stay above this (no sag/pike)
 
 const FALLBACK_DOWN = 105;
 const FALLBACK_UP = 150;
@@ -96,20 +99,30 @@ function parseTarget(t: string): number {
   return parseInt(nums[nums.length - 1], 10);
 }
 
+const NUM_WORDS = [
+  "zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
+  "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
+  "sixteen", "seventeen", "eighteen", "nineteen", "twenty",
+];
+
 export default function PushupCamera({
   exerciseName,
   target,
   move,
+  amrapSeconds,
   onClose,
   onUseCount,
 }: {
   exerciseName: string;
   target: string;
   move: CameraMove;
+  amrapSeconds?: number;
   onClose: () => void;
   onUseCount: (reps: number) => void;
 }) {
   const cfg = MOVES[move];
+  const amrap = amrapSeconds != null;
+  const strictForm = move === "pushup";
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -121,9 +134,15 @@ export default function PushupCamera({
   const [stage, setStage] = useState<"up" | "down" | "—">("—");
   const [metric, setMetric] = useState<number | null>(null);
   const [tracking, setTracking] = useState(false);
+  const [formCue, setFormCue] = useState("");
+  const [voiceOn, setVoiceOn] = useState(false);
+  const [secsLeft, setSecsLeft] = useState(amrapSeconds ?? 0);
+  const [phase, setPhase] = useState<"idle" | "running" | "ended">(
+    amrap ? "idle" : "running"
+  );
 
   const remaining = Math.max(0, targetReps - done);
-  const finished = done >= targetReps;
+  const finished = !amrap && done >= targetReps;
 
   const stageRef = useRef<"up" | "down">("up");
   const doneRef = useRef(0);
@@ -132,11 +151,16 @@ export default function PushupCamera({
   const smoothRef = useRef<number | null>(null);
   const minRef = useRef<number | null>(null);
   const maxRef = useRef<number | null>(null);
+  const minElbowRef = useRef(180); // per-rep depth (pushup)
+  const minBodyRef = useRef(180); // per-rep straightness (pushup)
+  const countingRef = useRef(!amrap); // gate counting during AMRAP idle/ended
   const runningRef = useRef(true);
   const rafRef = useRef<number | null>(null);
   const lmRef = useRef<any>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioRef = useRef<AudioContext | null>(null);
+  const recRef = useRef<any>(null);
+  const voiceRef = useRef(false);
 
   function beep(freq = 880, dur = 0.18) {
     try {
@@ -160,9 +184,111 @@ export default function PushupCamera({
     }
   }
 
+  function speak(text: string) {
+    if (!voiceRef.current) return;
+    try {
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = 1.1;
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(u);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function countRep() {
+    doneRef.current += 1;
+    const n = doneRef.current;
+    setDone(n);
+    if (voiceRef.current) speak(NUM_WORDS[n] ?? String(n));
+    if (!amrap && n >= targetRef.current) {
+      beep(660, 0.18);
+      beep(990, 0.3);
+      if (voiceRef.current) speak("Done!");
+    } else {
+      beep(880);
+    }
+  }
+
+  // ----- AMRAP timer -----
+  function startAmrap() {
+    if (phase !== "idle") return;
+    setPhase("running");
+    countingRef.current = true;
+    beep(880);
+    if (voiceRef.current) speak("Go!");
+  }
+  useEffect(() => {
+    if (!amrap || phase !== "running") return;
+    if (secsLeft <= 0) {
+      countingRef.current = false;
+      setPhase("ended");
+      beep(660, 0.2);
+      beep(990, 0.35);
+      if (voiceRef.current) speak(`Time! ${doneRef.current} reps`);
+      return;
+    }
+    const id = setTimeout(() => {
+      setSecsLeft((s) => s - 1);
+      if (voiceRef.current && secsLeft <= 3) speak(String(secsLeft));
+    }, 1000);
+    return () => clearTimeout(id);
+  }, [amrap, phase, secsLeft]);
+
+  // ----- voice commands -----
+  function toggleVoice() {
+    const next = !voiceOn;
+    setVoiceOn(next);
+    voiceRef.current = next;
+    if (next) startRecognition();
+    else stopRecognition();
+  }
+  function startRecognition() {
+    const SR =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) {
+      setFormCue("Voice commands not supported on this browser.");
+      return;
+    }
+    try {
+      const rec = new SR();
+      rec.continuous = true;
+      rec.interimResults = false;
+      rec.lang = "en-US";
+      rec.onresult = (e: any) => {
+        const t = e.results[e.results.length - 1][0].transcript.toLowerCase();
+        if (/(reset|restart)/.test(t)) reset();
+        else if (/(done|finish|complete|stop)/.test(t)) onUseCount(doneRef.current);
+        else if (/(close|exit|cancel)/.test(t)) onClose();
+        else if (amrap && /(start|go|begin)/.test(t)) startAmrap();
+      };
+      rec.onend = () => {
+        if (voiceRef.current) {
+          try {
+            rec.start();
+          } catch {
+            /* already started */
+          }
+        }
+      };
+      rec.start();
+      recRef.current = rec;
+    } catch {
+      /* ignore */
+    }
+  }
+  function stopRecognition() {
+    try {
+      recRef.current?.stop();
+    } catch {
+      /* ignore */
+    }
+    recRef.current = null;
+  }
+
+  // ----- camera + pose loop -----
   useEffect(() => {
     let cancelled = false;
-
     (async () => {
       try {
         if (!navigator.mediaDevices?.getUserMedia)
@@ -215,6 +341,16 @@ export default function PushupCamera({
       }
     })();
 
+    function bodyAngle(pose: Pt[], vis: (i: number) => boolean): number | null {
+      const vals: number[] = [];
+      if (vis(LM.lShoulder) && vis(LM.lHip) && vis(LM.lKnee))
+        vals.push(angleAt(pose[LM.lShoulder], pose[LM.lHip], pose[LM.lKnee]) ?? 180);
+      if (vis(LM.rShoulder) && vis(LM.rHip) && vis(LM.rKnee))
+        vals.push(angleAt(pose[LM.rShoulder], pose[LM.rHip], pose[LM.rKnee]) ?? 180);
+      if (!vals.length) return null;
+      return Math.min(...vals);
+    }
+
     function loop() {
       if (!runningRef.current) return;
       const video = videoRef.current;
@@ -233,7 +369,6 @@ export default function PushupCamera({
         if (pose) {
           const vis = (i: number) => (pose[i]?.visibility ?? 0) > 0.5;
 
-          // ---- compute the scalar we track for this movement ----
           let value: number | null = null;
           if (cfg.kind === "vertical") {
             if (vis(LM.lShoulder) && vis(LM.rShoulder))
@@ -256,39 +391,64 @@ export default function PushupCamera({
             setMetric(sm);
             setTracking(true);
 
-            minRef.current = minRef.current == null ? sm : Math.min(minRef.current, sm);
-            maxRef.current = maxRef.current == null ? sm : Math.max(maxRef.current, sm);
-            const lo = minRef.current!;
-            const hi = maxRef.current!;
-            const range = hi - lo;
-            const hasRange = range >= cfg.minRange;
-
-            let downT: number | null;
-            let upT: number | null;
-            if (hasRange) {
-              downT = lo + range * 0.32;
-              upT = lo + range * 0.68;
-            } else if (cfg.kind === "angle") {
-              downT = FALLBACK_DOWN;
-              upT = FALLBACK_UP;
-            } else {
-              downT = upT = null; // vertical needs an established range first
-            }
-
-            if (downT != null && upT != null) {
-              if (stageRef.current === "up" && sm < downT) {
+            if (strictForm) {
+              // ---- precise pushup form ----
+              const body = bodyAngle(pose, vis);
+              if (stageRef.current === "up" && sm < PUSH_DOWN_ENTER) {
                 stageRef.current = "down";
                 setStage("down");
-              } else if (stageRef.current === "down" && sm > upT) {
-                stageRef.current = "up";
-                setStage("up");
-                doneRef.current += 1;
-                setDone(doneRef.current);
-                if (doneRef.current >= targetRef.current) {
-                  beep(660, 0.18);
-                  beep(990, 0.3);
-                } else {
-                  beep(880);
+                minElbowRef.current = sm;
+                minBodyRef.current = body ?? 180;
+              } else if (stageRef.current === "down") {
+                minElbowRef.current = Math.min(minElbowRef.current, sm);
+                if (body != null) minBodyRef.current = Math.min(minBodyRef.current, body);
+                if (sm > PUSH_UP_EXIT) {
+                  stageRef.current = "up";
+                  setStage("up");
+                  const depthOk = minElbowRef.current <= PUSH_DEPTH;
+                  const straightOk = minBodyRef.current >= PUSH_STRAIGHT;
+                  if (countingRef.current && depthOk && straightOk) {
+                    setFormCue("Clean rep ✓");
+                    countRep();
+                  } else if (!depthOk) {
+                    setFormCue("⚠ Go lower — chest to the floor");
+                  } else if (!straightOk) {
+                    setFormCue("⚠ Keep your body straight");
+                  }
+                }
+              }
+              // live coaching while descending
+              if (stageRef.current === "down") {
+                if (sm > PUSH_DEPTH + 5) setFormCue("Lower…");
+                else if (body != null && body < PUSH_STRAIGHT) setFormCue("Straighten your body");
+                else setFormCue("Now push up");
+              }
+            } else {
+              // ---- generic adaptive counting ----
+              minRef.current = minRef.current == null ? sm : Math.min(minRef.current, sm);
+              maxRef.current = maxRef.current == null ? sm : Math.max(maxRef.current, sm);
+              const lo = minRef.current!;
+              const hi = maxRef.current!;
+              const range = hi - lo;
+              const hasRange = range >= cfg.minRange;
+              let downT: number | null, upT: number | null;
+              if (hasRange) {
+                downT = lo + range * 0.32;
+                upT = lo + range * 0.68;
+              } else if (cfg.kind === "angle") {
+                downT = FALLBACK_DOWN;
+                upT = FALLBACK_UP;
+              } else {
+                downT = upT = null;
+              }
+              if (downT != null && upT != null) {
+                if (stageRef.current === "up" && sm < downT) {
+                  stageRef.current = "down";
+                  setStage("down");
+                } else if (stageRef.current === "down" && sm > upT) {
+                  stageRef.current = "up";
+                  setStage("up");
+                  if (countingRef.current) countRep();
                 }
               }
             }
@@ -313,16 +473,17 @@ export default function PushupCamera({
         /* ignore */
       }
       streamRef.current?.getTracks().forEach((t) => t.stop());
+      stopRecognition();
+      try {
+        window.speechSynthesis?.cancel();
+      } catch {
+        /* ignore */
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [move]);
 
-  function drawPose(
-    ctx: CanvasRenderingContext2D,
-    canvas: HTMLCanvasElement,
-    pose: Pt[],
-    st: "up" | "down"
-  ) {
+  function drawPose(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, pose: Pt[], st: "up" | "down") {
     const W = canvas.width, H = canvas.height;
     const color = st === "down" ? "#22c55e" : "#f5e000";
     ctx.lineWidth = Math.max(3, W / 160);
@@ -351,18 +512,32 @@ export default function PushupCamera({
     smoothRef.current = null;
     minRef.current = null;
     maxRef.current = null;
+    minElbowRef.current = 180;
+    minBodyRef.current = 180;
     setDone(0);
     setStage("—");
+    setFormCue("");
+    if (amrap) {
+      setSecsLeft(amrapSeconds!);
+      setPhase("idle");
+      countingRef.current = false;
+    }
   }
+
+  const bigNumber = amrap ? done : finished ? "✓" : remaining;
+  const bigLabel = amrap ? "pushups" : finished ? "done" : "reps left";
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black/95 backdrop-blur">
       <div className="flex items-center justify-between px-4 py-3">
-        <button onClick={onClose} className="text-sm text-white/60 hover:text-white">
-          ✕ Close
-        </button>
+        <button onClick={onClose} className="text-sm text-white/60 hover:text-white">✕ Close</button>
         <span className="truncate px-2 text-sm font-semibold">{exerciseName}</span>
-        <span className="text-sm text-white/50">Target {target}</span>
+        <button
+          onClick={toggleVoice}
+          className={`rounded-full px-3 py-1 text-sm font-bold ${voiceOn ? "bg-[var(--accent)] text-black" : "bg-white/10 text-white/60"}`}
+        >
+          🎤 {voiceOn ? "On" : "Off"}
+        </button>
       </div>
 
       <div className="relative mx-auto w-full max-w-2xl flex-1 overflow-hidden">
@@ -373,24 +548,49 @@ export default function PushupCamera({
           <div className="absolute left-0 top-0 flex items-start gap-3 p-4">
             <div className={`rounded-2xl px-5 py-3 text-center ${finished ? "bg-green-500/80" : "bg-black/60"}`}>
               <div className={`text-6xl font-black leading-none tabular-nums ${finished ? "text-black" : "text-[var(--accent)]"}`}>
-                {finished ? "✓" : remaining}
+                {bigNumber}
               </div>
               <div className={`mt-1 text-[10px] uppercase tracking-widest ${finished ? "text-black/70" : "text-white/60"}`}>
-                {finished ? "done" : "reps left"}
+                {bigLabel}
               </div>
             </div>
-            {status === "ready" && (
-              <div className={`rounded-xl px-3 py-2 text-sm font-bold ${
-                stage === "down" ? "bg-green-500 text-black" : stage === "up" ? "bg-[var(--accent)] text-black" : "bg-white/10 text-white/60"
-              }`}>
+            {amrap && (
+              <div className={`rounded-xl px-3 py-2 text-center ${secsLeft <= 5 && phase === "running" ? "bg-red-500 text-black" : "bg-black/60"}`}>
+                <div className="text-2xl font-black tabular-nums">{secsLeft}s</div>
+                <div className="text-[10px] uppercase tracking-widest opacity-70">left</div>
+              </div>
+            )}
+            {status === "ready" && !amrap && (
+              <div className={`rounded-xl px-3 py-2 text-sm font-bold ${stage === "down" ? "bg-green-500 text-black" : stage === "up" ? "bg-[var(--accent)] text-black" : "bg-white/10 text-white/60"}`}>
                 {stage === "down" ? "▼" : stage === "up" ? "▲" : "…"}
-                {cfg.kind === "angle" && metric != null && (
-                  <span className="ml-2 font-normal opacity-70">{Math.round(metric)}°</span>
-                )}
-                <span className="ml-2 block text-[10px] font-normal opacity-60">{done} done</span>
+                {cfg.kind === "angle" && metric != null && <span className="ml-2 font-normal opacity-70">{Math.round(metric)}°</span>}
               </div>
             )}
           </div>
+
+          {/* form cue banner */}
+          {status === "ready" && formCue && (
+            <div className={`absolute bottom-14 left-1/2 -translate-x-1/2 rounded-full px-4 py-2 text-center text-sm font-bold ${formCue.startsWith("⚠") ? "bg-red-500/90 text-black" : formCue.startsWith("Clean") ? "bg-green-500/90 text-black" : "bg-black/70 text-white"}`}>
+              {formCue}
+            </div>
+          )}
+
+          {/* AMRAP start overlay */}
+          {amrap && status === "ready" && phase === "idle" && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/50">
+              <p className="text-sm text-white/70">{cfg.cue}</p>
+              <button onClick={startAmrap} className="rounded-2xl bg-[var(--accent)] px-10 py-4 text-xl font-black text-black active:scale-95">
+                ▶ Start {amrapSeconds}s
+              </button>
+            </div>
+          )}
+          {amrap && phase === "ended" && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/70 text-center">
+              <p className="text-sm uppercase tracking-widest text-white/60">Time!</p>
+              <p className="text-7xl font-black text-[var(--accent)]">{done}</p>
+              <p className="text-white/60">pushups</p>
+            </div>
+          )}
 
           {status !== "ready" && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center">
@@ -404,31 +604,34 @@ export default function PushupCamera({
             </div>
           )}
 
-          {status === "ready" && !tracking && (
-            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/70 px-4 py-2 text-center text-xs text-white/70">
-              {cfg.cue}
-            </div>
+          {status === "ready" && !tracking && !formCue && (
+            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/70 px-4 py-2 text-center text-xs text-white/70">{cfg.cue}</div>
           )}
         </div>
       </div>
 
       <div className="mx-auto w-full max-w-2xl px-4 py-4">
-        <div className="mb-3 flex items-center justify-center gap-4">
-          <span className="text-xs uppercase tracking-wider text-white/40">Goal</span>
-          <div className="flex items-center gap-3">
-            <button onClick={() => setTargetReps((n) => Math.max(1, n - 1))} className="h-9 w-9 rounded-lg bg-white/10 text-lg font-bold active:scale-90">−</button>
-            <span className="w-10 text-center text-2xl font-black tabular-nums">{targetReps}</span>
-            <button onClick={() => setTargetReps((n) => n + 1)} className="h-9 w-9 rounded-lg bg-white/10 text-lg font-bold active:scale-90">+</button>
+        {!amrap && (
+          <div className="mb-3 flex items-center justify-center gap-4">
+            <span className="text-xs uppercase tracking-wider text-white/40">Goal</span>
+            <div className="flex items-center gap-3">
+              <button onClick={() => setTargetReps((n) => Math.max(1, n - 1))} className="h-9 w-9 rounded-lg bg-white/10 text-lg font-bold active:scale-90">−</button>
+              <span className="w-10 text-center text-2xl font-black tabular-nums">{targetReps}</span>
+              <button onClick={() => setTargetReps((n) => n + 1)} className="h-9 w-9 rounded-lg bg-white/10 text-lg font-bold active:scale-90">+</button>
+            </div>
           </div>
-        </div>
+        )}
 
-        <p className="mb-3 text-center text-xs text-white/40">
-          Counts down each rep — it auto-calibrates to your range of motion. {cfg.cue}.
-        </p>
+        {voiceOn && (
+          <p className="mb-2 text-center text-xs text-[var(--accent)]/80">
+            Say “reset”, “done”{amrap ? ", “start”" : ""}, or “close”
+          </p>
+        )}
+
         <div className="flex gap-3">
           <button onClick={reset} className="rounded-xl bg-white/10 px-5 py-3 font-semibold active:scale-95">Reset</button>
           <button onClick={() => onUseCount(done)} className="flex-1 rounded-xl bg-[var(--accent)] py-3 font-black text-black active:scale-[0.98]">
-            ✓ Use {done} &amp; Complete Set
+            {amrap ? `✓ Use ${done}` : `✓ Use ${done} & Complete Set`}
           </button>
         </div>
       </div>
