@@ -18,7 +18,7 @@ const LM = {
   lAnkle: 27, rAnkle: 28,
 } as const;
 
-type Pt = { x: number; y: number; visibility?: number };
+type Pt = { x: number; y: number; z?: number; visibility?: number };
 
 const MOVES: Record<
   CameraMove,
@@ -77,16 +77,17 @@ const MOVES: Record<
 const PUSH_DOWN_ENTER = 110; // begin tracking the descent below this
 const PUSH_UP_EXIT = 150; // count the rep once locked out above this
 const PUSH_DEPTH = 100; // bottom must reach at/below this (chest low)
-const PUSH_STRAIGHT = 158; // hip line must stay above this (no sag/pike)
+const PUSH_STRAIGHT = 150; // average hip line must stay above this (no sag/pike)
 
 const FALLBACK_DOWN = 105;
 const FALLBACK_UP = 150;
 
+// 3D angle at vertex b (uses z when present — robust to camera tilt).
 function angleAt(a: Pt, b: Pt, c: Pt): number | null {
-  const abx = a.x - b.x, aby = a.y - b.y;
-  const cbx = c.x - b.x, cby = c.y - b.y;
-  const dot = abx * cbx + aby * cby;
-  const mag = Math.hypot(abx, aby) * Math.hypot(cbx, cby);
+  const abx = a.x - b.x, aby = a.y - b.y, abz = (a.z ?? 0) - (b.z ?? 0);
+  const cbx = c.x - b.x, cby = c.y - b.y, cbz = (c.z ?? 0) - (b.z ?? 0);
+  const dot = abx * cbx + aby * cby + abz * cbz;
+  const mag = Math.hypot(abx, aby, abz) * Math.hypot(cbx, cby, cbz);
   if (mag === 0) return null;
   let cos = dot / mag;
   cos = Math.max(-1, Math.min(1, cos));
@@ -152,7 +153,8 @@ export default function PushupCamera({
   const minRef = useRef<number | null>(null);
   const maxRef = useRef<number | null>(null);
   const minElbowRef = useRef(180); // per-rep depth (pushup)
-  const minBodyRef = useRef(180); // per-rep straightness (pushup)
+  const bodySumRef = useRef(0); // per-rep straightness accumulator
+  const bodyCountRef = useRef(0);
   const countingRef = useRef(!amrap); // gate counting during AMRAP idle/ended
   const runningRef = useRef(true);
   const rafRef = useRef<number | null>(null);
@@ -341,12 +343,12 @@ export default function PushupCamera({
       }
     })();
 
-    function bodyAngle(pose: Pt[], vis: (i: number) => boolean): number | null {
+    function bodyAngle(pts: Pt[], vis: (i: number) => boolean): number | null {
       const vals: number[] = [];
       if (vis(LM.lShoulder) && vis(LM.lHip) && vis(LM.lKnee))
-        vals.push(angleAt(pose[LM.lShoulder], pose[LM.lHip], pose[LM.lKnee]) ?? 180);
+        vals.push(angleAt(pts[LM.lShoulder], pts[LM.lHip], pts[LM.lKnee]) ?? 180);
       if (vis(LM.rShoulder) && vis(LM.rHip) && vis(LM.rKnee))
-        vals.push(angleAt(pose[LM.rShoulder], pose[LM.rHip], pose[LM.rKnee]) ?? 180);
+        vals.push(angleAt(pts[LM.rShoulder], pts[LM.rHip], pts[LM.rKnee]) ?? 180);
       if (!vals.length) return null;
       return Math.min(...vals);
     }
@@ -366,7 +368,11 @@ export default function PushupCamera({
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         const pose = res.landmarks?.[0] as Pt[] | undefined;
-        if (pose) {
+        // 3D world landmarks give foreshortening-proof angles (key for
+        // incline/decline pushups where the body tilts toward the camera).
+        const world = res.worldLandmarks?.[0] as Pt[] | undefined;
+        const src = world ?? pose;
+        if (pose && src) {
           const vis = (i: number) => (pose[i]?.visibility ?? 0) > 0.5;
 
           let value: number | null = null;
@@ -377,7 +383,7 @@ export default function PushupCamera({
             const vals: number[] = [];
             for (const [a, b, c] of cfg.joints) {
               if (vis(a) && vis(b) && vis(c)) {
-                const ang = angleAt(pose[a], pose[b], pose[c]);
+                const ang = angleAt(src[a], src[b], src[c]);
                 if (ang != null) vals.push(ang);
               }
             }
@@ -392,21 +398,26 @@ export default function PushupCamera({
             setTracking(true);
 
             if (strictForm) {
-              // ---- precise pushup form ----
-              const body = bodyAngle(pose, vis);
+              // ---- precise pushup form (3D angles, averaged) ----
+              const body = bodyAngle(src, vis);
               if (stageRef.current === "up" && sm < PUSH_DOWN_ENTER) {
                 stageRef.current = "down";
                 setStage("down");
                 minElbowRef.current = sm;
-                minBodyRef.current = body ?? 180;
+                bodySumRef.current = body ?? 180;
+                bodyCountRef.current = 1;
               } else if (stageRef.current === "down") {
                 minElbowRef.current = Math.min(minElbowRef.current, sm);
-                if (body != null) minBodyRef.current = Math.min(minBodyRef.current, body);
+                if (body != null) {
+                  bodySumRef.current += body;
+                  bodyCountRef.current += 1;
+                }
                 if (sm > PUSH_UP_EXIT) {
                   stageRef.current = "up";
                   setStage("up");
+                  const avgBody = bodyCountRef.current ? bodySumRef.current / bodyCountRef.current : 180;
                   const depthOk = minElbowRef.current <= PUSH_DEPTH;
-                  const straightOk = minBodyRef.current >= PUSH_STRAIGHT;
+                  const straightOk = avgBody >= PUSH_STRAIGHT;
                   if (countingRef.current && depthOk && straightOk) {
                     setFormCue("Clean rep ✓");
                     countRep();
@@ -513,7 +524,8 @@ export default function PushupCamera({
     minRef.current = null;
     maxRef.current = null;
     minElbowRef.current = 180;
-    minBodyRef.current = 180;
+    bodySumRef.current = 0;
+    bodyCountRef.current = 0;
     setDone(0);
     setStage("—");
     setFormCue("");
