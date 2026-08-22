@@ -1,7 +1,19 @@
 // Data transcribed directly from "Beginner Calisthenics Program" PDF.
 
 // Movement types the camera rep-counter knows how to detect.
-export type CameraMove = "pushup" | "squat" | "lunge" | "legraise" | "calf";
+// "pushup" is the only strict-form detector (depth + straight body line); the
+// rest use adaptive range-of-motion counting, which is what piked/hanging
+// movements need since their body line is deliberately not straight.
+export type CameraMove =
+  | "pushup"
+  | "pike"
+  | "squat"
+  | "lunge"
+  | "legraise"
+  | "calf"
+  | "pullup"
+  | "dip"
+  | "row";
 
 export type Exercise = {
   name: string;
@@ -40,7 +52,7 @@ export const upperA: Workout = {
         { name: "Incline Pushups", sets: 3, target: "10–15", cameraMove: "pushup", notes: "Target the lower chest." },
         { name: "Decline Pushups", sets: 3, target: "10–15", cameraMove: "pushup", notes: "Target the upper chest — increase the angle for difficulty." },
         { name: "Diamond Pushups", sets: 3, target: "10–15", cameraMove: "pushup", notes: "Target the triceps, as well as your inner chest." },
-        { name: "Pike Pushups", sets: 3, target: "6–10", cameraMove: "pushup", notes: "Help to build massive shoulders." },
+        { name: "Pike Pushups", sets: 3, target: "6–10", cameraMove: "pike", notes: "Help to build massive shoulders." },
         { name: "Archer Pushups", sets: 2, target: "6–10", cameraMove: "pushup", notes: "Combine everything — main purpose is improving stability and unilateral strength (like a one-arm pushup)." },
       ],
     },
@@ -59,8 +71,8 @@ export const upperB: Workout = {
       exercises: [
         { name: "Pushups", sets: 3, target: "Max reps", cameraMove: "pushup", notes: "The base exercise for almost everything — build strength and endurance here!" },
         { name: "Planche Leans", sets: 3, target: "10–20 sec", holdSeconds: 20, notes: "Helps your shoulders manage higher torque when doing more advanced exercises." },
-        { name: "Pike Pushups", sets: 3, target: "5–10", cameraMove: "pushup", notes: "Build strength for the handstand pushup." },
-        { name: "Dips", sets: 3, target: "6–10", cameraMove: "pushup", notes: "Give you even more strength in the lower chest, triceps and shoulders." },
+        { name: "Pike Pushups", sets: 3, target: "5–10", cameraMove: "pike", notes: "Build strength for the handstand pushup." },
+        { name: "Dips", sets: 3, target: "6–10", cameraMove: "dip", notes: "Give you even more strength in the lower chest, triceps and shoulders." },
       ],
     },
   ],

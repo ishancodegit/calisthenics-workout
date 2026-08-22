@@ -39,6 +39,41 @@ const MOVES: Record<
     cue: "Side angle — whole body in frame",
     minRange: 30,
   },
+  // Piked presses (pike pushups, elevated pike, handstand pushups). Same elbow
+  // angle as a pushup, but no straight-body check -- the pike breaks that line
+  // by design, so the strict pushup detector would reject every rep.
+  pike: {
+    kind: "angle",
+    joints: [[LM.lShoulder, LM.lElbow, LM.lWrist], [LM.rShoulder, LM.rElbow, LM.rWrist]],
+    agg: "avg",
+    segments: [[LM.lShoulder, LM.rShoulder], [LM.lShoulder, LM.lElbow], [LM.lElbow, LM.lWrist], [LM.rShoulder, LM.rElbow], [LM.rElbow, LM.rWrist], [LM.lShoulder, LM.lHip], [LM.lHip, LM.lKnee], [LM.rShoulder, LM.rHip], [LM.rHip, LM.rKnee]],
+    cue: "Side angle — hips high, whole body in frame",
+    minRange: 30,
+  },
+  pullup: {
+    kind: "angle",
+    joints: [[LM.lShoulder, LM.lElbow, LM.lWrist], [LM.rShoulder, LM.rElbow, LM.rWrist]],
+    agg: "avg",
+    segments: [[LM.lShoulder, LM.rShoulder], [LM.lShoulder, LM.lElbow], [LM.lElbow, LM.lWrist], [LM.rShoulder, LM.rElbow], [LM.rElbow, LM.rWrist], [LM.lShoulder, LM.lHip], [LM.rShoulder, LM.rHip]],
+    cue: "Side-on to the bar — arms and torso in frame",
+    minRange: 40,
+  },
+  dip: {
+    kind: "angle",
+    joints: [[LM.lShoulder, LM.lElbow, LM.lWrist], [LM.rShoulder, LM.rElbow, LM.rWrist]],
+    agg: "avg",
+    segments: [[LM.lShoulder, LM.rShoulder], [LM.lShoulder, LM.lElbow], [LM.lElbow, LM.lWrist], [LM.rShoulder, LM.rElbow], [LM.rElbow, LM.rWrist], [LM.lShoulder, LM.lHip], [LM.rShoulder, LM.rHip]],
+    cue: "Side-on — shoulders, elbows and hips in frame",
+    minRange: 35,
+  },
+  row: {
+    kind: "angle",
+    joints: [[LM.lShoulder, LM.lElbow, LM.lWrist], [LM.rShoulder, LM.rElbow, LM.rWrist]],
+    agg: "avg",
+    segments: [[LM.lShoulder, LM.rShoulder], [LM.lShoulder, LM.lElbow], [LM.lElbow, LM.lWrist], [LM.rShoulder, LM.rElbow], [LM.rElbow, LM.rWrist], [LM.lShoulder, LM.lHip], [LM.lHip, LM.lKnee]],
+    cue: "Side-on — whole body in frame",
+    minRange: 30,
+  },
   squat: {
     kind: "angle",
     joints: [[LM.lHip, LM.lKnee, LM.lAnkle], [LM.rHip, LM.rKnee, LM.rAnkle]],

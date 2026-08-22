@@ -11,12 +11,14 @@ import {
   type SetStep,
 } from "@/lib/workouts";
 import { decodeChallenge, type Challenge } from "@/lib/challenge";
+import { workoutSkill, logSet, type Skill } from "@/lib/skilltree";
 
 // Camera + pose model are heavy and browser-only — load on demand.
 const PushupCamera = dynamic(() => import("./PushupCamera"), { ssr: false });
 // Music player is client-only (Spotify iframe).
 const MusicPlayer = dynamic(() => import("./MusicPlayer"), { ssr: false });
 const ChallengeView = dynamic(() => import("./Challenge"), { ssr: false });
+const SkillTree = dynamic(() => import("./SkillTree"), { ssr: false });
 
 /* ------------------------------------------------------------------ */
 /* Sound                                                              */
@@ -172,9 +174,11 @@ function fmt(secs: number) {
 function Home({
   onStart,
   onChallenge,
+  onSkillTree,
 }: {
   onStart: (id: string) => void;
   onChallenge: () => void;
+  onSkillTree: () => void;
 }) {
   const [log, setLog] = useState<LogEntry[]>([]);
   useEffect(() => setLog(loadLog()), []);
@@ -204,6 +208,20 @@ function Home({
           {countThisWeek} workout{countThisWeek === 1 ? "" : "s"} logged this week
         </p>
       </div>
+
+      {/* Skill tree CTA */}
+      <button
+        onClick={onSkillTree}
+        className="mt-4 flex w-full items-center justify-between rounded-2xl bg-[#141414] p-5 text-left ring-1 ring-[var(--accent)]/40 transition hover:ring-[var(--accent)] active:scale-[0.99]"
+      >
+        <span>
+          <span className="block text-lg font-black text-[var(--accent)]">🌳 Skill Tree</span>
+          <span className="block text-sm font-medium text-white/55">
+            Hit a rep standard, unlock the next move
+          </span>
+        </span>
+        <span className="text-2xl font-black text-[var(--accent)]">▸</span>
+      </button>
 
       {/* Challenge CTA */}
       <button
@@ -299,7 +317,19 @@ function Runner({ workout, onExit }: { workout: Workout; onExit: () => void }) {
   const [idx, setIdx] = useState(0);
   const [phase, setPhase] = useState<"work" | "rest" | "done">("work");
   const [restLen, setRestLen] = useState(60);
+  const [unlocked, setUnlocked] = useState<Skill[]>([]);
   const { finish, tick, beep } = useBeeper();
+
+  // Feed a counted set into the skill tree when the exercise maps to a node.
+  const logToTree = useCallback(
+    (exerciseName: string, value: number, src: "camera" | "timer") => {
+      const id = workoutSkill[exerciseName];
+      if (!id) return;
+      const gained = logSet(id, value, src);
+      if (gained.length) setUnlocked(gained);
+    },
+    []
+  );
 
   const step = steps[idx];
 
@@ -320,7 +350,9 @@ function Runner({ workout, onExit }: { workout: Workout; onExit: () => void }) {
 
   const onHoldDone = useCallback(() => {
     finish();
-  }, [finish]);
+    const ex = steps[idx]?.exercise;
+    if (ex?.holdSeconds) logToTree(ex.name, ex.holdSeconds, "timer");
+  }, [finish, steps, idx, logToTree]);
 
   const rest = useCountdown(onRestDone, (n) => {
     if (n <= 3) tick();
@@ -390,6 +422,18 @@ function Runner({ workout, onExit }: { workout: Workout; onExit: () => void }) {
 
   return (
     <div className="mx-auto flex min-h-screen max-w-2xl flex-col px-4">
+      {unlocked.length > 0 && (
+        <button
+          onClick={() => setUnlocked([])}
+          className="fixed inset-x-0 top-0 z-50 mx-auto max-w-2xl px-4 pt-3"
+        >
+          <span className="block rounded-xl bg-[var(--accent)] px-4 py-3 text-left text-sm font-black text-black shadow-lg">
+            🔓 Unlocked: {unlocked.map((k) => `${k.icon} ${k.name}`).join(", ")}
+            <span className="ml-2 font-medium text-black/50">tap to dismiss</span>
+          </span>
+        </button>
+      )}
+
       {/* top bar */}
       <div className="flex items-center justify-between py-4">
         <button onClick={onExit} className="text-sm text-white/50 hover:text-white">
@@ -428,6 +472,7 @@ function Runner({ workout, onExit }: { workout: Workout; onExit: () => void }) {
             hold={hold}
             onComplete={completeSet}
             beep={beep}
+            onCounted={(reps) => logToTree(step.exercise.name, reps, "camera")}
           />
         )}
       </div>
@@ -463,11 +508,13 @@ function WorkView({
   hold,
   onComplete,
   beep,
+  onCounted,
 }: {
   step: SetStep;
   hold: ReturnType<typeof useCountdown>;
   onComplete: () => void;
   beep: (f?: number) => void;
+  onCounted: (reps: number) => void;
 }) {
   const isTimed = !!step.exercise.holdSeconds;
   const hasCamera = !!step.exercise.cameraMove;
@@ -591,6 +638,7 @@ function WorkView({
           onUseCount={(reps) => {
             setCountedReps(reps);
             setShowCamera(false);
+            onCounted(reps);
             onComplete();
           }}
         />
@@ -681,6 +729,7 @@ function RestView({
 export default function Page() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [challenge, setChallenge] = useState(false);
+  const [skillTree, setSkillTree] = useState(false);
   const [incoming, setIncoming] = useState<Challenge | null>(null);
 
   // Open the challenge directly from a shared ?c= link.
@@ -719,7 +768,9 @@ export default function Page() {
 
   return (
     <>
-      {challenge ? (
+      {skillTree ? (
+        <SkillTree onExit={() => setSkillTree(false)} />
+      ) : challenge ? (
         <ChallengeView
           incoming={incoming}
           onClose={() => {
@@ -730,7 +781,11 @@ export default function Page() {
       ) : activeId && workouts[activeId] ? (
         <Runner workout={workouts[activeId]} onExit={() => setActiveId(null)} />
       ) : (
-        <Home onStart={setActiveId} onChallenge={() => setChallenge(true)} />
+        <Home
+          onStart={setActiveId}
+          onChallenge={() => setChallenge(true)}
+          onSkillTree={() => setSkillTree(true)}
+        />
       )}
       {/* Persistent across views so music keeps playing into a session */}
       <MusicPlayer />
