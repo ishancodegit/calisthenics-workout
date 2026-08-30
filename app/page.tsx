@@ -11,12 +11,23 @@ import {
   type SetStep,
 } from "@/lib/workouts";
 import { decodeChallenge, type Challenge } from "@/lib/challenge";
+import { registerActions, registerContext } from "@/lib/agent/bus";
+import {
+  LOG_KEY,
+  loadLog,
+  progressSummary,
+  recommend,
+  type LogEntry,
+} from "@/lib/agent/recommend";
+import { findExercise } from "@/lib/agent/offline";
 
 // Camera + pose model are heavy and browser-only — load on demand.
 const PushupCamera = dynamic(() => import("./PushupCamera"), { ssr: false });
 // Music player is client-only (Spotify iframe).
 const MusicPlayer = dynamic(() => import("./MusicPlayer"), { ssr: false });
 const ChallengeView = dynamic(() => import("./Challenge"), { ssr: false });
+// The coach talks to the app through lib/agent/bus, so it can load late.
+const Coach = dynamic(() => import("./Coach"), { ssr: false });
 
 /* ------------------------------------------------------------------ */
 /* Sound                                                              */
@@ -133,18 +144,7 @@ function useCountdown(onDone: () => void, onTick?: (remaining: number) => void) 
 /* ------------------------------------------------------------------ */
 /* Progress storage                                                   */
 /* ------------------------------------------------------------------ */
-type LogEntry = { workoutId: string; date: string };
-const LOG_KEY = "calisthenics-log-v1";
 const REST_KEY = "calisthenics-rest-v1";
-
-function loadLog(): LogEntry[] {
-  if (typeof window === "undefined") return [];
-  try {
-    return JSON.parse(localStorage.getItem(LOG_KEY) || "[]");
-  } catch {
-    return [];
-  }
-}
 
 /* ------------------------------------------------------------------ */
 /* UI helpers                                                          */
@@ -358,6 +358,47 @@ function Runner({ workout, onExit }: { workout: Workout; onExit: () => void }) {
     advance();
   }
 
+  // Let the coach drive the set the user is actually standing in.
+  useEffect(() => {
+    return registerActions({
+      next_set: () => {
+        completeSet();
+        return { ok: true };
+      },
+      skip_rest: () => {
+        if (phase !== "rest") return { ok: false, message: "You're not resting right now." };
+        skipRest();
+        return { ok: true };
+      },
+      add_rest: ({ seconds }) => {
+        if (phase !== "rest") return { ok: false, message: "There's no rest timer running." };
+        rest.addTime(Number(seconds) || 15);
+        return { ok: true };
+      },
+      set_rest: ({ seconds }) => {
+        const n = Number(seconds);
+        if (!Number.isFinite(n)) return { ok: false };
+        setRestLen(Math.min(120, Math.max(30, Math.round(n))));
+        return { ok: true };
+      },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idx, phase, restLen, steps.length]);
+
+  useEffect(() => {
+    return registerContext(() => ({
+      screen: "workout",
+      workoutName: workout.name,
+      exercise: step?.exercise.name,
+      phase: phase === "done" ? undefined : phase,
+      setNumber: step?.setNumber,
+      totalSets: step?.totalSets,
+      setsLeft: steps.length - idx,
+      restSeconds: restLen,
+      hasCamera: !!step?.exercise.cameraMove,
+    }));
+  }, [workout, step, phase, restLen, idx, steps.length]);
+
   function logWorkout() {
     try {
       const log: LogEntry[] = JSON.parse(localStorage.getItem(LOG_KEY) || "[]");
@@ -483,6 +524,17 @@ function WorkView({
     hold.stop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step.exercise.name, step.setNumber]);
+
+  // The camera only exists on some exercises, so only offer it when it's real.
+  useEffect(() => {
+    if (!hasCamera) return;
+    return registerActions({
+      open_camera: () => {
+        setShowCamera(true);
+        return { ok: true };
+      },
+    });
+  }, [hasCamera]);
 
   const startHold = () => {
     setStarted(true);
@@ -698,6 +750,70 @@ export default function Page() {
     }
   }, []);
 
+  // Everything the coach can do from anywhere in the app.
+  useEffect(() => {
+    return registerActions({
+      start_workout: ({ workout }) => {
+        const asked = String(workout ?? "auto");
+        if (asked === "auto") {
+          const pick = recommend();
+          setChallenge(false);
+          setActiveId(pick.id);
+          return { ok: true, message: `${pick.name}. ${pick.reason}` };
+        }
+        if (!workouts[asked]) return { ok: false, message: "I don't know that session." };
+        setChallenge(false);
+        setActiveId(asked);
+        return { ok: true };
+      },
+      open_challenge: () => {
+        setActiveId(null);
+        setChallenge(true);
+        return { ok: true };
+      },
+      show_plan: () => {
+        const pick = recommend();
+        return { ok: true, message: `${pick.name}. ${pick.reason}` };
+      },
+      show_progress: () => ({ ok: true, message: progressSummary() }),
+      explain: ({ topic }) => {
+        const ex = findExercise(String(topic ?? ""));
+        if (!ex)
+          return {
+            ok: false,
+            message: "That one isn't in this program — the exercises here are pushup variations, dips, planche leans, hollow body holds, L-sits, leg raises, squats, lunges and calf raises.",
+          };
+        return {
+          ok: true,
+          message: `${ex.name} — ${ex.sets} sets of ${ex.target}. ${ex.notes}`,
+        };
+      },
+    });
+  }, []);
+
+  // Leaving only makes sense once you're somewhere.
+  useEffect(() => {
+    if (!activeId && !challenge) return;
+    return registerActions({
+      end_workout: () => {
+        setActiveId(null);
+        setChallenge(false);
+        setIncoming(null);
+        return { ok: true };
+      },
+    });
+  }, [activeId, challenge]);
+
+  useEffect(() => {
+    return registerContext(() => ({
+      screen: challenge ? "challenge" : activeId ? "workout" : "home",
+      workoutsThisWeek: loadLog().filter(
+        (l) => Date.now() - new Date(l.date).getTime() < 7 * 864e5
+      ).length,
+      suggestedWorkout: recommend().id,
+    }));
+  }, [activeId, challenge]);
+
   // keep screen awake during a session if supported
   useEffect(() => {
     let lock: any = null;
@@ -734,6 +850,7 @@ export default function Page() {
       )}
       {/* Persistent across views so music keeps playing into a session */}
       <MusicPlayer />
+      <Coach />
     </>
   );
 }

@@ -4,6 +4,7 @@ A personal workout runner built from the *Beginner Calisthenics Program* PDF. Bl
 
 ## Features
 
+- **Coach** — a “✦ Coach” button on every screen. Say what you want in plain words and it *does* it rather than telling you where to tap: “what should I do today” picks the right session from your split and history and starts it, “I've only got 20 minutes” drops the rests to 30s and begins, “done” finishes a set, “skip” cuts a rest short, “count my reps” opens the camera, “how do I do pike pushups” answers from the program, “put some music on” opens the player. Type it or hold the 🎤 and say it — if you speak, it speaks back. Works offline with no key and no account (see below).
 - **3 sessions** — Upper Body Plan A (Aesthetic), Upper Body Plan B (Strength), Legs + Abs — all transcribed from the PDF (sets, reps, notes).
 - **Guided runner** — step through every set with target reps and form notes.
 - **Timers for every exercise** — auto rest timer between sets (30/45/60/90/120s) with a countdown ring + beeps; dedicated hold countdowns for timed exercises (Planche Leans, Hollow Body Hold, L-Sit).
@@ -15,6 +16,35 @@ A personal workout runner built from the *Beginner Calisthenics Program* PDF. Bl
 - **Progress log** — sessions saved in your browser (localStorage); home screen shows weekly count and last-done dates.
 - **Weekly split + tips** from the PDF on the home screen.
 - Screen-wake-lock during a session (where supported), mobile-friendly.
+
+## How the Coach works
+
+The coach turns a sentence into **actions in the app** — the same ones the buttons
+trigger — instead of a wall of text. There are two brains behind it, and they
+share one action list (`lib/agent/actions.ts`), so both drive the app identically:
+
+- **Built in (default).** `lib/agent/offline.ts` matches plain English against
+  that action list, entirely in the browser. No key, no account, no network — it
+  works in a basement gym on airplane mode, which is the same reason the rest of
+  this app has no backend.
+- **Claude (optional).** If `ANTHROPIC_API_KEY` is set, `/api/agent` plans the
+  turn with Claude using the action list as tool definitions, which handles
+  phrasing the built-in matcher won't ("my elbows are cooked, give me something
+  that isn't pressing"). Anything at all — no key, no signal, a slow response —
+  falls back to the built-in brain, so the coach never dies mid-set.
+
+To enable the Claude path:
+
+1. Get a key at <https://console.anthropic.com>.
+2. Local: add `ANTHROPIC_API_KEY=sk-ant-...` to `.env.local`.
+   Vercel: `vercel env add ANTHROPIC_API_KEY` (Production), then redeploy.
+3. Optional: `ANTHROPIC_MODEL` to override the model (defaults to `claude-opus-5`).
+
+The key is **server-side only** — it is never sent to the browser. Without it the
+route returns 501 and the app stays a fully static, backend-free deploy.
+
+It is a workout coach, not a doctor: reported pain gets "stop and get it looked
+at", never a session.
 
 ## Run locally
 
@@ -56,4 +86,5 @@ with, plus a free one-time setup:
 Auth is Authorization Code + PKCE — fully client-side, no secret/backend. The
 Client ID is public, so it's safe in the browser.
 
-Built with Next.js 15 + Tailwind CSS v4. No backend.
+Built with Next.js 15 + Tailwind CSS v4. No backend required — the only server
+code is the optional `/api/agent` route for the Claude-powered coach.

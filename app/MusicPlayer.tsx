@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
+import { registerActions } from "@/lib/agent/bus";
 
 const SpotifyPlayer = dynamic(() => import("./SpotifyPlayer"), { ssr: false });
 
@@ -106,6 +107,20 @@ export default function MusicPlayer() {
     setErr("");
     setInput("");
   }
+
+  // "put some music on" — the coach opens this panel rather than explaining it.
+  useEffect(() => {
+    return registerActions({
+      open_music: () => {
+        setOpen(true);
+        return { ok: true };
+      },
+      close_music: () => {
+        setOpen(false);
+        return { ok: true };
+      },
+    });
+  }, []);
 
   return (
     <div className="fixed bottom-4 right-4 z-40 flex flex-col items-end gap-2">
