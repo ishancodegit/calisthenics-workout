@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Errand's own commands only. The dialog plugin is driven from Rust, not from the webview, so the frontend is never handed direct file-system reach.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
