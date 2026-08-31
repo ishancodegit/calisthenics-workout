@@ -15,6 +15,22 @@ export type Entry = {
   modified: number;
 };
 
+export type ConnectionStatus = {
+  /** False when this build has no Google sign-in configured. */
+  available: boolean;
+  connected: boolean;
+  email: string;
+};
+
+/** Emitted by Rust while a model downloads. */
+export type PullProgress = {
+  model: string;
+  /** 0-100, or -1 before Ollama knows the size. */
+  percent: number;
+  status: string;
+  done: boolean;
+};
+
 export type OllamaStatus = {
   installed: boolean;
   running: boolean;
@@ -59,9 +75,26 @@ export const machine = {
   applyPlan: (plan: Plan) => call<Receipt>("apply_plan", { plan }),
   undo: (token: string) => call<number>("undo_plan", { token }),
 
+  searchWeb: (query: string) => call<string>("search_web", { query }),
+  readEmail: (query: string) => call<string>("read_email", { query }),
+  readCalendar: (days: number) => call<string>("read_calendar", { days }),
+
+  googleStatus: () => call<ConnectionStatus>("google_status"),
+  connectGoogle: () => call<string>("connect_google"),
+  disconnectGoogle: () => call<void>("disconnect_google"),
+
   ollamaStatus: () => call<OllamaStatus>("ollama_status"),
   pullModel: (model: string) => call<void>("pull_model", { model }),
 };
+
+/** Subscribe to model-download progress. No-op outside the desktop app. */
+export async function onPullProgress(
+  handler: (progress: PullProgress) => void,
+): Promise<() => void> {
+  if (!isDesktop()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<PullProgress>("pull-progress", (event) => handler(event.payload));
+}
 
 /* ------------------------------------------------------------------ */
 /* Browser fallback                                                    */
@@ -161,6 +194,27 @@ async function browserFallback<T>(cmd: string, args: Record<string, unknown>): P
       return as({ applied: (args.plan as Plan).changes.length, token: "demo" });
     case "undo_plan":
       return as(0);
+    case "search_web":
+      return as(
+        "Bin collection days\nhttps://example.gov.uk/bins\nFind your collection day by postcode.\n\n(demo mode — the desktop app runs a real search here.)",
+      );
+    case "read_email":
+      return as(
+        [
+          "From: Sarah | Subject: Lunch Thursday? | Mon, 3 Jun | Are you free around 1?",
+          "From: EDF Energy | Subject: Your bill is ready | Sun, 2 Jun | Your statement for May…",
+        ].join("\n"),
+      );
+    case "read_calendar":
+      return as(
+        "2024-06-14T09:30:00Z — Dentist (at High Street)\n2024-06-14T14:00:00Z — Team call",
+      );
+    case "google_status":
+      return as({ available: false, connected: false, email: "" });
+    case "connect_google":
+      throw new Error("Connecting an account only works in the desktop app.");
+    case "disconnect_google":
+      return as(undefined);
     case "ollama_status":
       return as({ installed: true, running: true, models: ["llama3.1:8b"] });
     case "pull_model":

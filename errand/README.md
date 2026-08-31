@@ -42,9 +42,11 @@ Rust side decides.
 - Tidy a messy folder into sensible sub-folders — by kind, or by month
 - Read documents and spreadsheets and answer questions about them
 - Write summaries, drafts, and spreadsheets you can open in Excel
-- Read a web page you point it at
+- Search the web, and read a page you point it at
+- Check your email and calendar, once you connect a Google account
 
 Everything that changes a file goes through the approve-and-undo flow above.
+Email and calendar are **read-only** — see below.
 
 ## Architecture
 
@@ -54,8 +56,12 @@ errand/
 │   ├── sandbox.rs   which folders are reachable (symlink-safe)
 │   ├── plan.rs      propose → approve → apply → undo
 │   ├── files.rs     list, search, read, and the tidy-up planner
-│   └── text.rs      HTML → text, CSV parsing
+│   ├── oauth.rs     PKCE sign-in, tested against the RFC 7636 vectors
+│   ├── web.rs       pulling results out of a search page
+│   ├── text.rs      HTML → text, CSV parsing
+│   └── timefmt.rs   dates, without a date library
 ├── src-tauri/     Rust. Thin desktop shell: window, folder picker, commands.
+│   └── google.rs    the loopback OAuth flow and the Gmail/Calendar calls
 └── src/           TypeScript. The agent loop and the interface.
     ├── agent/loop.ts        the loop, and the guards that keep small models sane
     ├── agent/tools.ts       what the agent can do, described for a 7B model
@@ -79,6 +85,43 @@ tools.
 | **Default — local** | Ollama on the user's machine. `qwen2.5:7b` by default; the app installs it. Free per message, private, works offline. |
 | **Optional — cloud** | Paste your own Anthropic key for hard errands. Off by default, because the moment it's on you're paying per message again. |
 
+## Connecting email and calendar
+
+Sign-in is the authorization code flow with PKCE and **no client secret** — an
+installed app can't keep one, since anything in the binary is readable by
+anyone who downloads it. The browser is sent to Google, redirected back to a
+loopback port, and the one-time code is swapped for tokens. A random `state`
+is required on the way back, so another process on the machine can't race us
+to that port.
+
+Two deliberate limits:
+
+- **Read-only scopes.** `gmail.readonly` and `calendar.readonly`. Errand can
+  tell you what's in your inbox and what's on today. It cannot send, delete,
+  or move anything — a 7B model should never be one bad inference away from
+  emailing your boss. Drafting is done by writing a file you can read first.
+- **Headers and snippets only.** Never the full body of every message: three
+  emails would fill a local model's context window.
+
+A shipped build bakes in the vendor's Google client ID (public by design for
+installed apps). To try it from source, create an OAuth **Desktop app** client
+in the Google Cloud console and:
+
+```bash
+export ERRAND_GOOGLE_CLIENT_ID="…apps.googleusercontent.com"
+npm run tauri dev
+```
+
+Without it, the Settings panel says sign-in isn't configured rather than
+failing mysteriously.
+
+## Web search
+
+There is no search API key, because a per-search cost would undercut the whole
+pricing argument. Errand reads DuckDuckGo's no-JavaScript HTML endpoint. That
+is scraping, and scraping breaks — so the parser is tested against a saved
+fixture and degrades to "no results came back" rather than erroring.
+
 ## Running it
 
 Browser preview — no install, made-up files, shows the real flow:
@@ -100,8 +143,9 @@ npm run tauri icon src-tauri/icons/icon.png   # once, for platform icon formats
 ## Tests
 
 ```bash
-cd core && cargo test          # 13 tests: sandbox escapes, undo, rollback, parsing
-npm test                       # 11 tests: the agent loop under a misbehaving model
+cd core && cargo test    # 26 tests: sandbox and symlink escapes, undo, rollback,
+                         #           PKCE against the RFC vectors, parsing
+npm test                 # 11 tests: the agent loop under a misbehaving model
 ```
 
 The Rust tests are the product promise in executable form — that the agent
@@ -112,13 +156,18 @@ anything that isn't reversible.
 
 Being straight about it:
 
-- **The desktop shell has not been compiled yet.** `core/` and the frontend are
-  tested; `src-tauri/src/main.rs` is thin plumbing over them but needs a machine
-  with the GTK/WebKit development libraries to build and try.
-- **Email and calendar aren't connected.** They need OAuth per provider, which
-  is the next real milestone. The tool interface is ready for them.
-- **Web search isn't wired up** — the agent can read a page you give it, but
-  can't go looking. A search API is a subscription-funded addition.
-- **Model downloads show no progress bar.** Ollama streams progress; the UI
-  currently just says "this can take a few minutes".
-- **Granted folders aren't remembered between launches** yet.
+- **The Google connector has never run against Google.** The PKCE maths is
+  tested against the RFC's own vectors and the whole shell compiles, but no
+  real sign-in has happened — that needs a client ID and a browser. Treat the
+  Gmail and Calendar response parsing as unverified until it has.
+- **The refresh token is stored in a file**, owner-only (`0600` on Unix), in
+  the app config directory. It belongs in the OS keychain; that's a dependency
+  with its own platform baggage, so it's the next thing here.
+- **Sending email and creating calendar entries are deliberately absent.**
+  Extending the approve-and-undo model to actions that can't be undone —
+  a sent email — needs more thought than a file move does.
+- **Search results depend on DuckDuckGo's HTML staying put.** Tested against a
+  fixture; if the markup changes, results go empty until the parser is updated.
+- **No packaged installers are produced here.** `--no-bundle` builds the
+  binary; `npm run tauri build` produces `.deb`/`.dmg`/`.msi` on a machine with
+  the platform tooling.

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { RECOMMENDED, probeOllama } from "../agent/providers/ollama.ts";
-import { machine, isDesktop } from "../agent/bridge.ts";
+import { machine, isDesktop, onPullProgress } from "../agent/bridge.ts";
 
 /**
  * Onboarding is the product's hardest problem: the pitch only works if the
@@ -17,6 +17,7 @@ export default function Setup({
   const [running, setRunning] = useState(false);
   const [models, setModels] = useState<string[]>([]);
   const [busy, setBusy] = useState("");
+  const [progress, setProgress] = useState<{ percent: number; status: string } | null>(null);
   const [folder, setFolder] = useState<string | null>(null);
   const [error, setError] = useState("");
 
@@ -33,6 +34,12 @@ export default function Setup({
   useEffect(() => {
     void check();
     void machine.grantedFolders().then((f) => setFolder(f[0] ?? null));
+    // Rust streams Ollama's own progress while a model downloads.
+    let stop: (() => void) | undefined;
+    void onPullProgress((p) => setProgress({ percent: p.percent, status: p.status })).then(
+      (off) => (stop = off),
+    );
+    return () => stop?.();
   }, []);
 
   const installed = (id: string) => models.some((m) => m === id || m.startsWith(`${id.split(":")[0]}:`));
@@ -41,13 +48,17 @@ export default function Setup({
   async function download(id: string) {
     setBusy(id);
     setError("");
+    setProgress({ percent: -1, status: "starting" });
     try {
       await machine.pullModel(id);
       await check();
-    } catch {
-      setError("That download didn't finish. Check your internet and try again.");
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : "That download didn't finish. Try again.",
+      );
     } finally {
       setBusy("");
+      setProgress(null);
     }
   }
 
@@ -137,9 +148,34 @@ export default function Setup({
               </div>
             ))}
             {busy && (
-              <p className="text-sm breathe" style={{ color: "var(--muted)" }}>
-                This is a big file — it can take a few minutes. You can leave this open.
-              </p>
+              <div>
+                {/* A multi-gigabyte download with no feedback looks like a
+                    crash, at exactly the moment someone decides to trust this. */}
+                <div
+                  className="h-2 w-full overflow-hidden rounded-full"
+                  style={{ background: "var(--line)" }}
+                  role="progressbar"
+                  aria-label="Download progress"
+                  aria-valuenow={progress && progress.percent >= 0 ? progress.percent : undefined}
+                >
+                  <div
+                    className={`h-full rounded-full transition-all duration-300 ${
+                      progress && progress.percent >= 0 ? "" : "breathe"
+                    }`}
+                    style={{
+                      background: "var(--accent)",
+                      width:
+                        progress && progress.percent >= 0 ? `${progress.percent}%` : "100%",
+                    }}
+                  />
+                </div>
+                <p className="mt-2 text-sm" style={{ color: "var(--muted)" }}>
+                  {progress && progress.percent >= 0
+                    ? `${progress.percent}% — ${progress.status}`
+                    : "Starting the download…"}{" "}
+                  It's a big file; you can leave this open.
+                </p>
+              </div>
             )}
           </div>
         )}

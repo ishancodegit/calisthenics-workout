@@ -247,6 +247,60 @@ export function buildTools(): Record<string, Tool> {
     {
       kind: "read",
       schema: {
+        name: "search_web",
+        description:
+          "Search the web when you need a fact or a page you don't have a link for. Use it before read_web_page when the person hasn't given you an address.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "What to search for." },
+          },
+          required: ["query"],
+        },
+      },
+      run: (args) => machine.searchWeb(str(args.query)),
+    },
+
+    /* ---------------- their email and calendar ---------------- */
+    {
+      kind: "read",
+      schema: {
+        name: "read_email",
+        description:
+          "Look at the person's email. Leave the search empty for the most recent messages, or use Gmail search terms like 'from:sarah', 'is:unread', 'subject:invoice', 'newer_than:7d'. You see who it's from, the subject and the first line — not the whole message.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: {
+              type: "string",
+              description: "Gmail search terms, or an empty string for the latest.",
+            },
+          },
+          required: ["query"],
+        },
+      },
+      run: (args) => machine.readEmail(str(args.query)),
+    },
+    {
+      kind: "read",
+      schema: {
+        name: "read_calendar",
+        description:
+          "See what's in the person's calendar. Use 1 for today, 7 for the week ahead.",
+        parameters: {
+          type: "object",
+          properties: {
+            days: { type: "number", description: "How many days ahead to look." },
+          },
+          required: ["days"],
+        },
+      },
+      run: (args) => machine.readCalendar(Number(args.days) || 1),
+    },
+
+    {
+      kind: "read",
+      schema: {
         name: "read_web_page",
         description:
           "Fetch a web page and read its text. Use it when the person gives you a link, or asks what a page says.",
@@ -269,7 +323,8 @@ export const CAPABILITY_SUMMARY = [
   "Tidy up a messy folder, and undo it",
   "Read documents and spreadsheets, and answer questions about them",
   "Write summaries, drafts and spreadsheets",
-  "Read a web page you point it at",
+  "Search the web and read pages",
+  "Check your email and calendar, once you connect them",
 ];
 
 export type { Plan };

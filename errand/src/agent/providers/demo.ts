@@ -23,7 +23,14 @@ export function demoProvider(): Provider {
         [...messages].reverse().find((m) => m.role === "user")?.content.toLowerCase() ?? "";
 
       if (alreadyActed) {
-        return { text: "All done — that's sorted.", toolCalls: [] };
+        // Echo what the tool returned, so the preview shows a real answer
+        // rather than a canned one.
+        const last = [...messages].reverse().find((m) => m.role === "tool");
+        const body = last && "content" in last ? last.content : "";
+        return {
+          text: body && body.length < 400 ? body : "All done — that's sorted.",
+          toolCalls: [],
+        };
       }
 
       if (/tidy|sort|organis|organiz|mess|clean/.test(goal)) {
@@ -36,6 +43,26 @@ export function demoProvider(): Provider {
               args: { folder: FOLDER, by: /month|photo|date/.test(goal) ? "month" : "kind" },
             },
           ],
+        };
+      }
+      if (/calendar|diary|schedule|today|on today|appointment/.test(goal)) {
+        return {
+          text: "",
+          toolCalls: [
+            { id: "1", name: "read_calendar", args: { days: /week/.test(goal) ? 7 : 1 } },
+          ],
+        };
+      }
+      if (/email|inbox|mail|message/.test(goal)) {
+        return {
+          text: "",
+          toolCalls: [{ id: "1", name: "read_email", args: { query: "" } }],
+        };
+      }
+      if (/look up|search the web|google|what is|who is/.test(goal)) {
+        return {
+          text: "",
+          toolCalls: [{ id: "1", name: "search_web", args: { query: goal } }],
         };
       }
       if (/find|search|where|look for/.test(goal)) {

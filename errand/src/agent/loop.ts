@@ -230,6 +230,10 @@ function summarise(name: string, result: string): string {
       return "Searched the web";
     case "read_web_page":
       return "Read a web page";
+    case "read_email":
+      return `Looked at ${lines} message${lines === 1 ? "" : "s"}`;
+    case "read_calendar":
+      return "Checked the calendar";
     default:
       return name.replace(/_/g, " ");
   }

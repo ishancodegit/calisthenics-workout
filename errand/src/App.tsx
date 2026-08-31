@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Setup from "./ui/Setup.tsx";
 import PlanCard from "./ui/PlanCard.tsx";
 import { runErrand, SYSTEM_PROMPT } from "./agent/loop.ts";
@@ -6,6 +6,7 @@ import { buildTools, CAPABILITY_SUMMARY } from "./agent/tools.ts";
 import { localProvider } from "./agent/providers/ollama.ts";
 import { demoProvider } from "./agent/providers/demo.ts";
 import { machine, isDesktop } from "./agent/bridge.ts";
+import type { ConnectionStatus } from "./agent/bridge.ts";
 import type { Plan, Receipt, Step } from "./agent/types.ts";
 
 type Entry =
@@ -18,7 +19,7 @@ const EXAMPLES = [
   "Tidy up my Downloads folder",
   "Find everything with 'invoice' in the name",
   "What's in my budget spreadsheet?",
-  "Group my photos by month",
+  "What's on my calendar today?",
 ];
 
 export default function App() {
@@ -29,6 +30,26 @@ export default function App() {
   const [pending, setPending] = useState<Plan | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+  const [google, setGoogle] = useState<ConnectionStatus | null>(null);
+  const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState("");
+
+  useEffect(() => {
+    void machine.googleStatus().then(setGoogle).catch(() => setGoogle(null));
+  }, []);
+
+  async function connectGoogle() {
+    setConnecting(true);
+    setConnectError("");
+    try {
+      await machine.connectGoogle();
+      setGoogle(await machine.googleStatus());
+    } catch (e) {
+      setConnectError(e instanceof Error ? e.message : "That didn't connect.");
+    } finally {
+      setConnecting(false);
+    }
+  }
 
   // Resolves when the person presses Do it / No thanks on a plan.
   const decision = useRef<((approved: boolean) => void) | null>(null);
@@ -148,6 +169,47 @@ export default function App() {
           >
             Add another folder
           </button>
+
+          <p className="mt-5 font-medium">Email and calendar</p>
+          {google?.connected ? (
+            <>
+              <p className="mt-1" style={{ color: "var(--muted)" }}>
+                Connected as {google.email}. Errand can read your mail and calendar; it
+                cannot send, delete or change anything.
+              </p>
+              <button
+                onClick={async () => {
+                  await machine.disconnectGoogle();
+                  setGoogle(await machine.googleStatus());
+                }}
+                className="mt-2 rounded-lg border px-3 py-1.5"
+                style={{ borderColor: "var(--line)" }}
+              >
+                Disconnect
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="mt-1" style={{ color: "var(--muted)" }}>
+                {google?.available === false
+                  ? "This build doesn't have Google sign-in set up yet."
+                  : "Connect Google so Errand can answer questions about your inbox and what's on today. Read-only — it can't send or delete anything."}
+              </p>
+              <button
+                onClick={connectGoogle}
+                disabled={connecting || google?.available === false}
+                className="mt-2 rounded-lg border px-3 py-1.5 disabled:opacity-40"
+                style={{ borderColor: "var(--line)" }}
+              >
+                {connecting ? "Waiting for your browser…" : "Connect Google"}
+              </button>
+              {connectError && (
+                <p className="mt-2" style={{ color: "var(--warn)" }}>
+                  {connectError}
+                </p>
+              )}
+            </>
+          )}
 
           <p className="mt-5 font-medium">Harder jobs (optional)</p>
           <p className="mt-1" style={{ color: "var(--muted)" }}>

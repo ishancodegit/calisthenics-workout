@@ -13,11 +13,14 @@ use errand_core::{
     apply, files, html_to_text, parse_csv, plan::Change, propose_organize, undo, Plan, Receipt,
     Sandbox, Scheme,
 };
+mod google;
+
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::{Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 /// Big enough for a long document, small enough not to blow an 8k context.
@@ -73,6 +76,45 @@ struct OllamaStatus {
 type Fallible<T> = Result<T, String>;
 
 /* ------------------------------------------------------------------ */
+/* Remembering which folders were granted                              */
+/* ------------------------------------------------------------------ */
+
+/// Granted folders survive a restart, because being asked to re-pick your
+/// Downloads folder every launch would train people to click through the one
+/// prompt that matters.
+fn config_file(app: &AppHandle) -> Option<PathBuf> {
+    let dir = app.path().app_config_dir().ok()?;
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join("folders.json"))
+}
+
+fn save_folders(app: &AppHandle, sandbox: &Sandbox) {
+    let Some(path) = config_file(app) else { return };
+    let roots: Vec<String> = sandbox
+        .roots()
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect();
+    if let Ok(json) = serde_json::to_string_pretty(&roots) {
+        let _ = std::fs::write(path, json);
+    }
+}
+
+/// Re-grant on startup. A folder that has since been deleted or unmounted is
+/// dropped silently rather than failing the launch — `grant` re-validates each
+/// one, so a stale entry can never widen access.
+fn load_folders(app: &AppHandle, sandbox: &mut Sandbox) {
+    let Some(path) = config_file(app) else { return };
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let saved: Vec<String> = serde_json::from_str(&text).unwrap_or_default();
+    for folder in saved {
+        let _ = sandbox.grant(folder);
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /* Folder access                                                       */
 /* ------------------------------------------------------------------ */
 
@@ -90,7 +132,11 @@ fn granted_folders(app: State<App>) -> Vec<String> {
 /// Opens the OS folder picker. Access is granted by the act of choosing —
 /// there is no way for the agent to add a folder on its own.
 #[tauri::command]
-async fn grant_folder(window: tauri::Window, app: State<'_, App>) -> Fallible<Option<String>> {
+async fn grant_folder(
+    window: tauri::Window,
+    handle: AppHandle,
+    app: State<'_, App>,
+) -> Fallible<Option<String>> {
     let chosen = window.dialog().file().blocking_pick_folder();
     let Some(picked) = chosen else {
         return Ok(None);
@@ -98,18 +144,20 @@ async fn grant_folder(window: tauri::Window, app: State<'_, App>) -> Fallible<Op
     let path: PathBuf = picked
         .into_path()
         .map_err(|e| format!("Couldn't open that folder: {e}"))?;
-    let granted = app
-        .sandbox
-        .lock()
-        .unwrap()
-        .grant(&path)
-        .map_err(|e| e.to_string())?;
+    let granted = {
+        let mut sandbox = app.sandbox.lock().unwrap();
+        let granted = sandbox.grant(&path).map_err(|e| e.to_string())?;
+        save_folders(&handle, &sandbox);
+        granted
+    };
     Ok(Some(granted.display().to_string()))
 }
 
 #[tauri::command]
-fn revoke_folder(path: String, app: State<App>) {
-    app.sandbox.lock().unwrap().revoke(path);
+fn revoke_folder(path: String, handle: AppHandle, app: State<App>) {
+    let mut sandbox = app.sandbox.lock().unwrap();
+    sandbox.revoke(path);
+    save_folders(&handle, &sandbox);
 }
 
 /* ------------------------------------------------------------------ */
@@ -259,28 +307,177 @@ async fn ollama_status() -> OllamaStatus {
     }
 }
 
-/// Downloading a model is a long job; Ollama streams progress, and we simply
-/// wait for it to finish. The UI says so, because it can take minutes.
+/// Downloading a model is a long job — several gigabytes, several minutes — so
+/// the person needs to see it moving. Ollama streams NDJSON progress lines; we
+/// forward them to the window as percentages and let the UI draw a bar.
+/// Without this the app looks frozen at exactly the moment someone decides
+/// whether to trust it.
+#[derive(Clone, Serialize)]
+struct PullProgress {
+    model: String,
+    /// 0-100, or -1 while Ollama is still working out what to fetch.
+    percent: i32,
+    /// Ollama's own wording, e.g. "pulling manifest", "verifying sha256".
+    status: String,
+    done: bool,
+}
+
 #[tauri::command]
-async fn pull_model(model: String) -> Fallible<()> {
+async fn pull_model(model: String, handle: AppHandle) -> Fallible<()> {
     let response = reqwest::Client::new()
         .post("http://127.0.0.1:11434/api/pull")
-        .json(&serde_json::json!({ "model": model, "stream": false }))
+        .json(&serde_json::json!({ "model": model, "stream": true }))
         .send()
         .await
         .map_err(|_| "I couldn't reach Ollama. Is it open?".to_string())?;
 
     if !response.status().is_success() {
-        return Err("That download didn't finish.".into());
+        return Err("That download didn't start. Check the name and try again.".into());
     }
+
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+    let mut last_percent = -2;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|_| "The download was interrupted.".to_string())?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+        // Ollama sends one JSON object per line, and a chunk can split a line
+        // in half — so only parse up to the last newline and keep the rest.
+        while let Some(newline) = buffer.find('\n') {
+            let line: String = buffer.drain(..=newline).collect();
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+                continue;
+            };
+            if let Some(error) = value["error"].as_str() {
+                return Err(format!("The download failed: {error}"));
+            }
+
+            let completed = value["completed"].as_u64();
+            let total = value["total"].as_u64().filter(|t| *t > 0);
+            let percent = match (completed, total) {
+                (Some(done), Some(total)) => ((done as f64 / total as f64) * 100.0) as i32,
+                _ => -1,
+            };
+            let status = value["status"].as_str().unwrap_or("working").to_string();
+
+            // Only emit on a real change, or the UI repaints hundreds of
+            // times a second for a multi-gigabyte file.
+            if percent != last_percent {
+                last_percent = percent;
+                let _ = handle.emit(
+                    "pull-progress",
+                    PullProgress {
+                        model: model.clone(),
+                        percent,
+                        status,
+                        done: false,
+                    },
+                );
+            }
+        }
+    }
+
+    let _ = handle.emit(
+        "pull-progress",
+        PullProgress {
+            model: model.clone(),
+            percent: 100,
+            status: "ready".into(),
+            done: true,
+        },
+    );
     Ok(())
+}
+
+/* ------------------------------------------------------------------ */
+/* Email and calendar                                                  */
+/* ------------------------------------------------------------------ */
+
+#[derive(Serialize)]
+struct ConnectionStatus {
+    /// False when the build has no Google client ID compiled in.
+    available: bool,
+    connected: bool,
+    email: String,
+}
+
+#[tauri::command]
+fn google_status(handle: AppHandle) -> ConnectionStatus {
+    let account = google::load_account(&handle);
+    ConnectionStatus {
+        available: google::client_id().is_some(),
+        connected: account.is_some(),
+        email: account.map(|a| a.email).unwrap_or_default(),
+    }
+}
+
+#[tauri::command]
+async fn connect_google(handle: AppHandle) -> Fallible<String> {
+    google::connect(handle).await
+}
+
+#[tauri::command]
+fn disconnect_google(handle: AppHandle) {
+    google::disconnect(&handle);
+}
+
+/// `query` uses Gmail's own search syntax, which the model is told about.
+#[tauri::command]
+async fn read_email(query: String, handle: AppHandle) -> Fallible<String> {
+    let account = google::load_account(&handle)
+        .ok_or("No email account is connected. Connect one in Settings.")?;
+    google::list_email(&account, &query, 12).await
+}
+
+#[tauri::command]
+async fn read_calendar(days: u32, handle: AppHandle) -> Fallible<String> {
+    let account = google::load_account(&handle)
+        .ok_or("No calendar is connected. Connect one in Settings.")?;
+    google::list_events(&account, days).await
+}
+
+/* ------------------------------------------------------------------ */
+/* Searching the web                                                   */
+/* ------------------------------------------------------------------ */
+
+/// No search API, so no per-search cost — see `errand_core::web`.
+#[tauri::command]
+async fn search_web(query: String) -> Fallible<String> {
+    let response = reqwest::Client::new()
+        .post("https://html.duckduckgo.com/html/")
+        .header("content-type", "application/x-www-form-urlencoded")
+        .header("user-agent", "Mozilla/5.0 (compatible; Errand/0.1)")
+        .body(format!("q={}", errand_core::oauth::urlencode(&query)))
+        .send()
+        .await
+        .map_err(|_| "I couldn't reach the search engine.".to_string())?;
+
+    let body = response
+        .text()
+        .await
+        .map_err(|_| "The search engine sent back nothing I could read.".to_string())?;
+
+    let hits = errand_core::parse_results(&body, 8);
+    if hits.is_empty() {
+        return Ok("No results came back for that.".into());
+    }
+    Ok(hits
+        .iter()
+        .map(|h| format!("{}\n{}\n{}", h.title, h.url, h.snippet))
+        .collect::<Vec<_>>()
+        .join("\n\n"))
 }
 
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            app.manage(App::default());
+            let state = App::default();
+            load_folders(app.handle(), &mut state.sandbox.lock().unwrap());
+            app.manage(state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -298,6 +495,12 @@ fn main() {
             undo_plan,
             ollama_status,
             pull_model,
+            google_status,
+            connect_google,
+            disconnect_google,
+            read_email,
+            read_calendar,
+            search_web,
         ])
         .run(tauri::generate_context!())
         .expect("Errand failed to start");
