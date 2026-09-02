@@ -14,6 +14,8 @@ use errand_core::{
     Sandbox, Scheme,
 };
 mod google;
+mod net;
+mod store;
 
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -82,36 +84,47 @@ type Fallible<T> = Result<T, String>;
 /// Granted folders survive a restart, because being asked to re-pick your
 /// Downloads folder every launch would train people to click through the one
 /// prompt that matters.
-fn config_file(app: &AppHandle) -> Option<PathBuf> {
-    let dir = app.path().app_config_dir().ok()?;
-    std::fs::create_dir_all(&dir).ok()?;
-    Some(dir.join("folders.json"))
-}
+const FOLDERS_FILE: &str = "folders.json";
+const SETTINGS_FILE: &str = "settings.json";
 
 fn save_folders(app: &AppHandle, sandbox: &Sandbox) {
-    let Some(path) = config_file(app) else { return };
     let roots: Vec<String> = sandbox
         .roots()
         .iter()
         .map(|p| p.display().to_string())
         .collect();
-    if let Ok(json) = serde_json::to_string_pretty(&roots) {
-        let _ = std::fs::write(path, json);
-    }
+    store::write(app, FOLDERS_FILE, &roots);
 }
 
-/// Re-grant on startup. A folder that has since been deleted or unmounted is
-/// dropped silently rather than failing the launch — `grant` re-validates each
-/// one, so a stale entry can never widen access.
+/// Re-grant on startup. A folder since deleted or unmounted is dropped
+/// silently rather than failing the launch — `grant` re-validates each one, so
+/// a stale entry can never widen access.
 fn load_folders(app: &AppHandle, sandbox: &mut Sandbox) {
-    let Some(path) = config_file(app) else { return };
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return;
-    };
-    let saved: Vec<String> = serde_json::from_str(&text).unwrap_or_default();
+    let saved: Vec<String> = store::read(app, FOLDERS_FILE);
     for folder in saved {
         let _ = sandbox.grant(folder);
     }
+}
+
+/// Which model was chosen, and the optional API key. Kept out of the webview's
+/// localStorage so the key sits in one owner-only file alongside the Google
+/// token, rather than in browser storage.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct Settings {
+    #[serde(default)]
+    model: String,
+    #[serde(default)]
+    api_key: String,
+}
+
+#[tauri::command]
+fn load_settings(handle: AppHandle) -> Settings {
+    store::read(&handle, SETTINGS_FILE)
+}
+
+#[tauri::command]
+fn save_settings(settings: Settings, handle: AppHandle) {
+    store::write(&handle, SETTINGS_FILE, &settings);
 }
 
 /* ------------------------------------------------------------------ */
@@ -199,23 +212,15 @@ fn read_sheet(path: String, app: State<App>) -> Fallible<Vec<Vec<String>>> {
 
 /// Fetching happens here rather than in the webview so the page can't run in
 /// our origin, and so the CSP stays closed to everything but Ollama.
+///
+/// `net::fetch_public` refuses anything that isn't on the public internet —
+/// see the reasoning there; it is what stops a prompt-injected email turning
+/// this tool into an exfiltration channel.
 #[tauri::command]
 async fn read_web_page(url: String) -> Fallible<String> {
-    if !url.starts_with("http://") && !url.starts_with("https://") {
-        return Err("That doesn't look like a web address.".into());
-    }
-    let response = reqwest::Client::new()
-        .get(&url)
-        .header("user-agent", "Errand/0.1")
-        .send()
-        .await
-        .map_err(|_| "I couldn't open that page.".to_string())?;
-    let body = response
-        .text()
-        .await
-        .map_err(|_| "That page didn't send anything I could read.".to_string())?;
+    let body = net::fetch_public(&url).await?;
     let mut text = html_to_text(&body);
-    text.truncate(MAX_PAGE_CHARS);
+    net::truncate_chars(&mut text, MAX_PAGE_CHARS);
     Ok(text)
 }
 
@@ -495,6 +500,8 @@ fn main() {
             undo_plan,
             ollama_status,
             pull_model,
+            load_settings,
+            save_settings,
             google_status,
             connect_google,
             disconnect_google,

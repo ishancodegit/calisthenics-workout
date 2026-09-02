@@ -97,8 +97,13 @@ pub fn search(sandbox: &Sandbox, query: &str, limit: usize) -> Result<Vec<Entry>
     Ok(out)
 }
 
-/// Read a text file, truncated so one oversized file can't blow the model's
-/// context window — the caller is told when that happened.
+/// Read a document as text, truncated so one oversized file can't blow the
+/// model's context window — the caller is told when that happened.
+///
+/// PDFs are the point of this function existing. "Pull the totals out of my
+/// receipts" is the errand people actually want, and receipts are PDFs; handing
+/// a local model the raw bytes of one wastes its whole context on binary and
+/// then invites it to hallucinate a number.
 pub fn read_text(
     sandbox: &Sandbox,
     path: impl AsRef<Path>,
@@ -106,13 +111,51 @@ pub fn read_text(
 ) -> Result<(String, bool), AccessError> {
     let real = sandbox.resolve(path)?;
     let bytes = std::fs::read(&real).map_err(|e| AccessError::Io(e.to_string()))?;
-    let truncated = bytes.len() > max_bytes;
-    let slice = if truncated {
-        &bytes[..max_bytes]
+
+    let text = if bytes.starts_with(b"%PDF") {
+        pdf_extract::extract_text_from_mem(&bytes).map_err(|_| {
+            AccessError::Io(
+                "I couldn't read the text out of that PDF — it may be a scan rather than                  a document with real text in it."
+                    .into(),
+            )
+        })?
+    } else if let Ok(text) = std::str::from_utf8(&bytes) {
+        text.to_string()
+    } else if looks_like_text(&bytes) {
+        // Not valid UTF-8, but mostly readable — an old file in some other
+        // encoding. Better a slightly mangled read than a refusal.
+        String::from_utf8_lossy(&bytes).to_string()
     } else {
-        &bytes[..]
+        return Err(AccessError::Io(format!(
+            "\u{201c}{}\u{201d} isn't something I can read as text.",
+            real.file_name().unwrap_or_default().to_string_lossy()
+        )));
     };
-    Ok((String::from_utf8_lossy(slice).to_string(), truncated))
+
+    let truncated = text.len() > max_bytes;
+    let mut out = text;
+    if truncated {
+        // Cut on a character boundary; `truncate` panics mid-codepoint.
+        let mut end = max_bytes;
+        while end > 0 && !out.is_char_boundary(end) {
+            end -= 1;
+        }
+        out.truncate(end);
+    }
+    Ok((out, truncated))
+}
+
+/// A rough "is this prose?" test: mostly printable, few NULs.
+fn looks_like_text(bytes: &[u8]) -> bool {
+    let sample = &bytes[..bytes.len().min(1024)];
+    if sample.is_empty() {
+        return true;
+    }
+    let printable = sample
+        .iter()
+        .filter(|b| **b >= 0x20 || matches!(b, b'\n' | b'\r' | b'\t'))
+        .count();
+    !sample.contains(&0) && printable * 10 >= sample.len() * 9
 }
 
 /// Buckets named the way a person would name them, not by MIME type.

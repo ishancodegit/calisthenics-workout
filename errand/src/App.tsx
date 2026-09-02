@@ -24,6 +24,9 @@ const EXAMPLES = [
 
 export default function App() {
   const [setup, setSetup] = useState<{ model: string; folder: string } | null>(null);
+  // Until we've looked, we don't know whether onboarding is needed — showing
+  // it and then yanking it away would be worse than a blank moment.
+  const [restoring, setRestoring] = useState(true);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -37,6 +40,36 @@ export default function App() {
   useEffect(() => {
     void machine.googleStatus().then(setGoogle).catch(() => setGoogle(null));
   }, []);
+
+  // Someone who set this up last week should land in the app, not in setup.
+  useEffect(() => {
+    (async () => {
+      try {
+        const [saved, folders, ollama] = await Promise.all([
+          machine.loadSettings(),
+          machine.grantedFolders(),
+          machine.ollamaStatus(),
+        ]);
+        if (saved.api_key) setApiKey(saved.api_key);
+        // Only skip onboarding if the saved model is still actually installed
+        // — someone may have removed it in Ollama since.
+        const stillThere = saved.model && ollama.models.includes(saved.model);
+        if (stillThere && folders.length > 0) {
+          setSetup({ model: saved.model, folder: folders[0] });
+        }
+      } catch {
+        /* fall through to onboarding */
+      } finally {
+        setRestoring(false);
+      }
+    })();
+  }, []);
+
+  // Remember the choices, so this is the last time they're asked.
+  useEffect(() => {
+    if (!setup) return;
+    void machine.saveSettings({ model: setup.model, api_key: apiKey }).catch(() => {});
+  }, [setup, apiKey]);
 
   async function connectGoogle() {
     setConnecting(true);
@@ -123,6 +156,7 @@ export default function App() {
     );
   }
 
+  if (restoring) return <div className="h-full" aria-busy="true" />;
   if (!setup) return <Setup onReady={setSetup} />;
 
   return (

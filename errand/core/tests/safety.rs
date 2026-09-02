@@ -224,3 +224,82 @@ fn an_empty_sandbox_can_reach_nothing() {
     assert!(sb.resolve("anything.txt").is_err());
     assert!(files::search(&sb, "tax", 10).unwrap().is_empty());
 }
+
+/// Receipts are PDFs, and "read my receipts" is the errand people actually
+/// want. These cover what the agent gets handed for each kind of file.
+mod documents {
+    use super::*;
+    use errand_core::files::read_text;
+
+    /// A minimal, uncompressed PDF containing one line of text.
+    fn tiny_pdf(body: &str) -> Vec<u8> {
+        let stream = format!("BT /F1 12 Tf 20 100 Td ({body}) Tj ET");
+        let mut pdf = String::from("%PDF-1.4\n");
+        let mut offsets = Vec::new();
+        let objects = [
+            "<</Type/Catalog/Pages 2 0 R>>".to_string(),
+            "<</Type/Pages/Kids[3 0 R]/Count 1>>".to_string(),
+            "<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 300]/Contents 4 0 R\
+             /Resources<</Font<</F1 5 0 R>>>>>>"
+                .to_string(),
+            format!("<</Length {}>>stream\n{stream}\nendstream", stream.len()),
+            "<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>".to_string(),
+        ];
+        for (i, object) in objects.iter().enumerate() {
+            offsets.push(pdf.len());
+            pdf.push_str(&format!("{} 0 obj\n{object}\nendobj\n", i + 1));
+        }
+        let xref_at = pdf.len();
+        pdf.push_str(&format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1));
+        for offset in &offsets {
+            pdf.push_str(&format!("{offset:010} 00000 n \n"));
+        }
+        pdf.push_str(&format!(
+            "trailer\n<</Size {}/Root 1 0 R>>\nstartxref\n{xref_at}\n%%EOF",
+            objects.len() + 1
+        ));
+        pdf.into_bytes()
+    }
+
+    #[test]
+    fn reads_the_text_out_of_a_pdf() {
+        let (tmp, sb) = sandboxed();
+        let path = tmp.path().join("Downloads").join("receipt.pdf");
+        fs::write(&path, tiny_pdf("Total 42.50")).unwrap();
+
+        let (text, _) = read_text(&sb, &path, 10_000).expect("PDF should be readable");
+        assert!(text.contains("42.50"), "got: {text:?}");
+    }
+
+    #[test]
+    fn a_binary_file_is_refused_in_words_rather_than_handed_over_as_noise() {
+        let (tmp, sb) = sandboxed();
+        let path = tmp.path().join("Downloads").join("photo.jpg");
+        fs::write(&path, [0xFF, 0xD8, 0xFF, 0x00, 0x01, 0x02, 0x00, 0x03]).unwrap();
+
+        let err = read_text(&sb, &path, 10_000).unwrap_err().to_string();
+        assert!(err.contains("isn't something I can read"), "{err}");
+    }
+
+    #[test]
+    fn truncation_never_splits_a_character() {
+        let (tmp, sb) = sandboxed();
+        let path = tmp.path().join("Downloads").join("notes.txt");
+        // Every character is 3 bytes, so a byte-cap of 10 lands mid-character.
+        fs::write(&path, "€".repeat(20)).unwrap();
+
+        let (text, truncated) = read_text(&sb, &path, 10).unwrap();
+        assert!(truncated);
+        assert_eq!(text, "€€€", "cut mid-codepoint: {text:?}");
+    }
+
+    #[test]
+    fn plain_text_still_reads_normally() {
+        let (tmp, sb) = sandboxed();
+        let path = tmp.path().join("Downloads").join("notes.txt");
+        fs::write(&path, "shopping list").unwrap();
+        let (text, truncated) = read_text(&sb, &path, 10_000).unwrap();
+        assert_eq!(text, "shopping list");
+        assert!(!truncated);
+    }
+}

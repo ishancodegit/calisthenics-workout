@@ -31,6 +31,8 @@ export type PullProgress = {
   done: boolean;
 };
 
+export type Settings = { model: string; api_key: string };
+
 export type OllamaStatus = {
   installed: boolean;
   running: boolean;
@@ -78,6 +80,9 @@ export const machine = {
   searchWeb: (query: string) => call<string>("search_web", { query }),
   readEmail: (query: string) => call<string>("read_email", { query }),
   readCalendar: (days: number) => call<string>("read_calendar", { days }),
+
+  loadSettings: () => call<Settings>("load_settings"),
+  saveSettings: (settings: Settings) => call<void>("save_settings", { settings }),
 
   googleStatus: () => call<ConnectionStatus>("google_status"),
   connectGoogle: () => call<string>("connect_google"),
@@ -209,6 +214,10 @@ async function browserFallback<T>(cmd: string, args: Record<string, unknown>): P
       return as(
         "2024-06-14T09:30:00Z — Dentist (at High Street)\n2024-06-14T14:00:00Z — Team call",
       );
+    case "load_settings":
+      return as({ model: "", api_key: "" });
+    case "save_settings":
+      return as(undefined);
     case "google_status":
       return as({ available: false, connected: false, email: "" });
     case "connect_google":

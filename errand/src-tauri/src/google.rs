@@ -9,12 +9,13 @@
 
 use errand_core::oauth::{self, Pkce};
 use errand_core::timefmt;
+
+use crate::store;
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
-use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 
 /// Public by design for installed apps. A shipped build bakes the vendor's ID
@@ -32,38 +33,21 @@ pub struct Account {
     pub refresh_token: String,
 }
 
-fn account_file(app: &AppHandle) -> Option<PathBuf> {
-    let dir = app.path().app_config_dir().ok()?;
-    std::fs::create_dir_all(&dir).ok()?;
-    Some(dir.join("google.json"))
-}
+const ACCOUNT_FILE: &str = "google.json";
 
 pub fn load_account(app: &AppHandle) -> Option<Account> {
-    let text = std::fs::read_to_string(account_file(app)?).ok()?;
-    serde_json::from_str(&text).ok()
+    let account: Account = store::read(app, ACCOUNT_FILE);
+    (!account.refresh_token.is_empty()).then_some(account)
 }
 
 /// The refresh token is a long-lived credential, so the file is owner-only.
 /// It still belongs in the OS keychain — see the README.
 fn save_account(app: &AppHandle, account: &Account) {
-    let Some(path) = account_file(app) else { return };
-    let Ok(json) = serde_json::to_string_pretty(account) else {
-        return;
-    };
-    if std::fs::write(&path, json).is_err() {
-        return;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-    }
+    store::write(app, ACCOUNT_FILE, account);
 }
 
 pub fn disconnect(app: &AppHandle) {
-    if let Some(path) = account_file(app) {
-        let _ = std::fs::remove_file(path);
-    }
+    store::remove(app, ACCOUNT_FILE);
 }
 
 /// What the browser shows after Google redirects back. The person is looking

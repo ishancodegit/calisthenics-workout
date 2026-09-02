@@ -254,6 +254,33 @@ test("a failing tool is reported to the model, not thrown at the person", async 
   assert.ok(result.steps.some((s) => s.type === "error"));
 });
 
+test("the activity line counts what came back, not the fence around it", async () => {
+  const fenced: Record<string, Tool> = {
+    read_email: {
+      kind: "read",
+      schema: {
+        name: "read_email",
+        description: "email",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+      async run() {
+        return "--- begin outside content ---\nfrom a\nfrom b\n--- end outside content ---";
+      },
+    },
+  };
+  const result = await runErrand("check my email", {
+    provider: scriptedProvider([
+      { text: "", toolCalls: [call("read_email")] },
+      { text: "Two messages.", toolCalls: [] },
+    ]),
+    tools: fenced,
+    onApproval: async () => false,
+    applyPlan: never,
+  });
+  const step = result.steps.find((s) => s.type === "tool");
+  assert.equal(step && step.type === "tool" ? step.summary : "", "Looked at 2 messages");
+});
+
 test("a dead model surfaces as a sentence, not a stack trace", async () => {
   const dead: Provider = {
     id: "local",
