@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "test": "node --test --experimental-strip-types src/agent/*.test.ts",
     "tauri": "tauri",
-    "test:all": "npm test && (cd core && cargo test) && (cd src-tauri && cargo test)"
+    "test:all": "npm test && npm run build && (cd core && cargo test) && (cd src-tauri && cargo test)"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",

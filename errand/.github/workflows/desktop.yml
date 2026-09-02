@@ -37,4 +37,5 @@ jobs:
           workspaces: src-tauri
 
       - run: npm ci
+      # `tauri build` runs the frontend build itself, via beforeBuildCommand.
       - run: npm run tauri build -- --no-bundle

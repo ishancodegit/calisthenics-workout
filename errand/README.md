@@ -160,6 +160,8 @@ which runs, in order:
 
 ```bash
 npm test                       # 17: the agent loop under a misbehaving model
+npm run build                  #     the shell embeds the built frontend, so a
+                               #     fresh clone must build before cargo runs
 (cd core && cargo test)        # 30: sandbox and symlink escapes, undo, rollback,
                                #     PDF reading, PKCE against the RFC vectors
 (cd src-tauri && cargo test)   #  4: what the agent is allowed to fetch

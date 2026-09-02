@@ -35,15 +35,17 @@ non-technical read those sentences and know what's about to happen?
 ## 2. Run the automated tests
 
 ```bash
-npm test                       # 17 tests — the agent loop and the tools
-(cd core && cargo test)        # 30 tests — the rules that protect your files
-(cd src-tauri && cargo test)   #  4 tests — what the agent is allowed to fetch
+npm run test:all
 ```
 
-Or all three at once:
+which is these, in order:
 
 ```bash
-npm run test:all
+npm test                       # 17 tests — the agent loop and the tools
+npm run build                  # the shell embeds the built frontend, so this
+                               # must come first on a fresh clone
+(cd core && cargo test)        # 30 tests — the rules that protect your files
+(cd src-tauri && cargo test)   #  4 tests — what the agent is allowed to fetch
 ```
 
 Worth reading rather than just running — the names say what's guaranteed:

@@ -42,6 +42,11 @@ jobs:
       - name: Agent loop and tools
         run: npm test
 
+      # The desktop shell embeds the built frontend at compile time, so this
+      # has to happen before any cargo step — dist/ is not committed.
+      - name: Build the frontend
+        run: npm run build
+
       - name: The rules that protect people's files
         run: cargo test --manifest-path core/Cargo.toml
 
@@ -56,6 +61,3 @@ jobs:
       - name: Lints
         run: |
           cargo clippy --manifest-path core/Cargo.toml -- -D warnings
-
-      - name: The app still builds
-        run: npm run build
