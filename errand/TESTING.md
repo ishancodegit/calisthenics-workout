@@ -7,7 +7,6 @@ Four ways in, cheapest first. If you only do one, do **1**.
 ## 1. See it work in 60 seconds (no install)
 
 ```bash
-cd errand
 npm install
 npm run dev          # then open http://localhost:5173
 ```
@@ -36,9 +35,15 @@ non-technical read those sentences and know what's about to happen?
 ## 2. Run the automated tests
 
 ```bash
-cd errand/core   && cargo test     # 30 tests — the safety rules
-cd errand        && npm test       # 16 tests — the agent loop and tools
-cd errand/src-tauri && cargo test  # 4 tests  — outbound fetch restrictions
+npm test                       # 17 tests — the agent loop and the tools
+(cd core && cargo test)        # 30 tests — the rules that protect your files
+(cd src-tauri && cargo test)   #  4 tests — what the agent is allowed to fetch
+```
+
+Or all three at once:
+
+```bash
+npm run test:all
 ```
 
 Worth reading rather than just running — the names say what's guaranteed:
@@ -47,6 +52,7 @@ Worth reading rather than just running — the names say what's guaranteed:
 - `refuses_to_overwrite_and_rolls_back_the_whole_plan`
 - `organizing_then_undoing_leaves_the_folder_exactly_as_it_was`
 - `saying_no_ends_the_errand_instead_of_letting_the_model_try_again`
+- `content_written_by_other_people_is_fenced_as_data`
 - `recognises_addresses_that_are_not_the_public_internet`
 - `matches_the_rfc_7636_test_vector`
 
@@ -59,8 +65,8 @@ You need [Rust](https://rustup.rs), the
 [Ollama](https://ollama.com/download).
 
 ```bash
-ollama serve                 # leave running
-cd errand && npm install
+ollama serve                 # leave running, in its own terminal
+npm install
 npm run tauri dev
 ```
 

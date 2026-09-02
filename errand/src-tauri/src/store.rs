@@ -28,7 +28,9 @@ pub fn read<T: DeserializeOwned + Default>(app: &AppHandle, name: &str) -> T {
 /// Write owner-only. Two of these files hold credentials; the third doesn't,
 /// but there's no reason for anyone else on the machine to read it either.
 pub fn write<T: Serialize>(app: &AppHandle, name: &str, value: &T) {
-    let Some(path) = path_for(app, name) else { return };
+    let Some(path) = path_for(app, name) else {
+        return;
+    };
     let Ok(json) = serde_json::to_string_pretty(value) else {
         return;
     };

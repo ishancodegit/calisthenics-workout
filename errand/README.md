@@ -62,7 +62,6 @@ Email and calendar are **read-only** — see below.
 ## Architecture
 
 ```
-errand/
 ├── core/          Rust. All the rules that protect the user's files.
 │   ├── sandbox.rs   which folders are reachable (symlink-safe)
 │   ├── plan.rs      propose → approve → apply → undo
@@ -154,10 +153,16 @@ npm run tauri icon src-tauri/icons/icon.png   # once, for platform icon formats
 ## Tests
 
 ```bash
-cd core && cargo test          # 30: sandbox and symlink escapes, undo, rollback,
+npm run test:all
+```
+
+which runs, in order:
+
+```bash
+npm test                       # 17: the agent loop under a misbehaving model
+(cd core && cargo test)        # 30: sandbox and symlink escapes, undo, rollback,
                                #     PDF reading, PKCE against the RFC vectors
-npm test                       # 16: the agent loop under a misbehaving model
-cd src-tauri && cargo test     #  4: what the agent is allowed to fetch
+(cd src-tauri && cargo test)   #  4: what the agent is allowed to fetch
 ```
 
 **[TESTING.md](TESTING.md) walks through trying it by hand**, including the

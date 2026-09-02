@@ -60,8 +60,7 @@ impl Pkce {
     pub fn generate() -> Self {
         use rand::Rng;
         // 43-128 characters from the unreserved set, per RFC 7636 §4.1.
-        const CHARS: &[u8] =
-            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+        const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
         let mut rng = rand::thread_rng();
         let verifier: String = (0..64)
             .map(|_| CHARS[rng.gen_range(0..CHARS.len())] as char)
@@ -149,10 +148,7 @@ pub fn query_params(request_line: &str) -> Vec<(String, String)> {
         .split('&')
         .filter_map(|pair| {
             let (key, value) = pair.split_once('=')?;
-            Some((
-                key.to_string(),
-                crate::web::percent_decode_public(value),
-            ))
+            Some((key.to_string(), crate::web::percent_decode_public(value)))
         })
         .collect()
 }
@@ -200,7 +196,10 @@ mod tests {
         assert_eq!(base64url(b"foobar"), "Zm9vYmFy");
         // URL-safe alphabet: no '+' or '/' may appear.
         let encoded = base64url(&[251, 255, 190]);
-        assert!(!encoded.contains('+') && !encoded.contains('/'), "{encoded}");
+        assert!(
+            !encoded.contains('+') && !encoded.contains('/'),
+            "{encoded}"
+        );
     }
 
     #[test]
@@ -222,8 +221,14 @@ mod tests {
             "st4te",
         );
         assert!(url.contains("code_challenge_method=S256"));
-        assert!(url.contains("access_type=offline"), "no refresh token would come back");
-        assert!(!url.contains("client_secret"), "installed apps have no secret");
+        assert!(
+            url.contains("access_type=offline"),
+            "no refresh token would come back"
+        );
+        assert!(
+            !url.contains("client_secret"),
+            "installed apps have no secret"
+        );
         assert!(url.contains("gmail.readonly"));
         assert!(!url.contains("gmail.send"), "asked for more than we need");
         assert!(url.contains("127.0.0.1"));
@@ -251,7 +256,10 @@ mod tests {
             code_from_request("GET /?code=attacker&state=wrong HTTP/1.1", "st4te"),
             None
         );
-        assert_eq!(code_from_request("GET /?code=attacker HTTP/1.1", "st4te"), None);
+        assert_eq!(
+            code_from_request("GET /?code=attacker HTTP/1.1", "st4te"),
+            None
+        );
         assert_ne!(random_state(), random_state());
     }
 }

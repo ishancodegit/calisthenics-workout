@@ -250,7 +250,10 @@ mod documents {
             pdf.push_str(&format!("{} 0 obj\n{object}\nendobj\n", i + 1));
         }
         let xref_at = pdf.len();
-        pdf.push_str(&format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1));
+        pdf.push_str(&format!(
+            "xref\n0 {}\n0000000000 65535 f \n",
+            objects.len() + 1
+        ));
         for offset in &offsets {
             pdf.push_str(&format!("{offset:010} 00000 n \n"));
         }

@@ -5,11 +5,11 @@
 //! unit-tested on their own, without a windowing system.
 
 pub mod files;
+pub mod oauth;
 pub mod plan;
 pub mod sandbox;
 pub mod text;
 pub mod timefmt;
-pub mod oauth;
 pub mod web;
 
 pub use files::{kind_of, list, propose_organize, read_text, search, Entry, Scheme};

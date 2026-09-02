@@ -104,7 +104,8 @@ pub fn truncate_chars(text: &mut String, max_bytes: usize) {
 
 /// Fetch a page, refusing anything that isn't on the public internet.
 pub async fn fetch_public(url: &str) -> Result<String, String> {
-    let mut target = reqwest::Url::parse(url).map_err(|_| "That doesn't look like a web address.".to_string())?;
+    let mut target = reqwest::Url::parse(url)
+        .map_err(|_| "That doesn't look like a web address.".to_string())?;
 
     for _ in 0..MAX_REDIRECTS {
         let pinned = resolve_public(&target)?;
@@ -155,13 +156,13 @@ mod tests {
     #[test]
     fn recognises_addresses_that_are_not_the_public_internet() {
         for blocked in [
-            "127.0.0.1",     // this machine
+            "127.0.0.1", // this machine
             "0.0.0.0",
-            "10.1.2.3",      // LAN
-            "192.168.1.1",   // the router
+            "10.1.2.3",    // LAN
+            "192.168.1.1", // the router
             "172.16.5.4",
             "169.254.169.254", // cloud metadata
-            "100.64.0.1",    // carrier NAT
+            "100.64.0.1",      // carrier NAT
         ] {
             let ip: Ipv4Addr = blocked.parse().unwrap();
             assert!(is_private(IpAddr::V4(ip)), "{blocked} should be refused");

@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "node --test --experimental-strip-types src/agent/*.test.ts",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test:all": "npm test && (cd core && cargo test) && (cd src-tauri && cargo test)"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",
@@ -26,5 +27,6 @@
     "tailwindcss": "^4.1.0",
     "typescript": "^5.9.0",
     "vite": "^7.1.0"
-  }
+  },
+  "description": "An assistant that does real jobs on your own computer, using a model that runs there too."
 }

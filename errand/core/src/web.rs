@@ -27,18 +27,16 @@ fn percent_decode(input: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
-            b'%' if i + 2 < bytes.len() => {
-                match u8::from_str_radix(&input[i + 1..i + 3], 16) {
-                    Ok(byte) => {
-                        out.push(byte);
-                        i += 3;
-                    }
-                    Err(_) => {
-                        out.push(bytes[i]);
-                        i += 1;
-                    }
+            b'%' if i + 2 < bytes.len() => match u8::from_str_radix(&input[i + 1..i + 3], 16) {
+                Ok(byte) => {
+                    out.push(byte);
+                    i += 3;
                 }
-            }
+                Err(_) => {
+                    out.push(bytes[i]);
+                    i += 1;
+                }
+            },
             b'+' => {
                 out.push(b' ');
                 i += 1;
@@ -123,7 +121,10 @@ pub fn parse_results(html: &str, limit: usize) -> Vec<SearchHit> {
             if title.is_empty() {
                 return None;
             }
-            let snippet = snippets.get(i).map(|&s| inner_text(html, s)).unwrap_or_default();
+            let snippet = snippets
+                .get(i)
+                .map(|&s| inner_text(html, s))
+                .unwrap_or_default();
             Some(SearchHit {
                 title,
                 url: unwrap_redirect(&href),

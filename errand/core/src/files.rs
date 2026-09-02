@@ -8,8 +8,8 @@
 //! the intent; let real code do the bookkeeping.
 
 use crate::plan::{Change, Plan};
-use crate::timefmt::month_folder;
 use crate::sandbox::{AccessError, Sandbox};
+use crate::timefmt::month_folder;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;

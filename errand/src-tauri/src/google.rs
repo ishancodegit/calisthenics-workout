@@ -135,14 +135,20 @@ pub async fn connect(app: AppHandle) -> Result<String, String> {
         .map_err(|_| "I couldn't open your browser to sign in.".to_string())?;
 
     // Blocking socket work must not sit on the async runtime's thread.
-    let waiter = { let state = state.clone(); tauri::async_runtime::spawn_blocking(move || wait_for_code(listener, &state)) };
+    let waiter = {
+        let state = state.clone();
+        tauri::async_runtime::spawn_blocking(move || wait_for_code(listener, &state))
+    };
     let code = waiter
         .await
         .map_err(|_| "Sign-in was interrupted.".to_string())?
         .ok_or("Sign-in didn't finish. Nothing was connected.")?;
 
     let tokens = post_form(oauth::token_exchange_body(
-        &client, &code, &pkce.verifier, &redirect,
+        &client,
+        &code,
+        &pkce.verifier,
+        &redirect,
     ))
     .await?;
 
@@ -171,7 +177,10 @@ async fn fetch_email_address(access_token: &str) -> Result<String, String> {
         .json()
         .await
         .map_err(|_| "no userinfo".to_string())?;
-    Ok(value["email"].as_str().unwrap_or("your account").to_string())
+    Ok(value["email"]
+        .as_str()
+        .unwrap_or("your account")
+        .to_string())
 }
 
 /// Access tokens last an hour; we simply mint a fresh one per request rather
@@ -233,8 +242,11 @@ pub async fn list_email(account: &Account, query: &str, max: usize) -> Result<St
             detail["payload"]["headers"]
                 .as_array()
                 .and_then(|hs| {
-                    hs.iter()
-                        .find(|h| h["name"].as_str().is_some_and(|n| n.eq_ignore_ascii_case(name)))
+                    hs.iter().find(|h| {
+                        h["name"]
+                            .as_str()
+                            .is_some_and(|n| n.eq_ignore_ascii_case(name))
+                    })
                 })
                 .and_then(|h| h["value"].as_str())
                 .unwrap_or("")
