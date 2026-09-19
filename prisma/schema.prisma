@@ -1,0 +1,83 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String     @id @default(cuid())
+  email     String     @unique
+  username  String     @unique
+  password  String
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  // Relations
+  habits         Habit[]
+  checkins       Checkin[]
+  sentRequests   Friendship[] @relation("requester")
+  receivedRequests Friendship[] @relation("recipient")
+
+  @@map("users")
+}
+
+model Habit {
+  id        String     @id @default(cuid())
+  title     String
+  description String?
+  frequency String     @default("daily") // daily, weekly, etc.
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  // Relations
+  userId    String
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  checkins  Checkin[]
+
+  @@index([userId])
+  @@map("habits")
+}
+
+model Checkin {
+  id        String     @id @default(cuid())
+  date      DateTime   @db.Date // The date of the checkin
+  proof     String?    // Text note or URL
+  completed Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  // Relations
+  habitId   String
+  habit     Habit      @relation(fields: [habitId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([habitId, date]) // Only one checkin per habit per day
+  @@index([userId])
+  @@index([habitId])
+  @@map("checkins")
+}
+
+model Friendship {
+  id        String     @id @default(cuid())
+  status    String     @default("pending") // pending, accepted, rejected
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  // Relations
+  requesterId String
+  requester   User       @relation("requester", fields: [requesterId], references: [id], onDelete: Cascade)
+  recipientId String
+  recipient   User       @relation("recipient", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@unique([requesterId, recipientId])
+  @@index([requesterId])
+  @@index([recipientId])
+  @@map("friendships")
+}

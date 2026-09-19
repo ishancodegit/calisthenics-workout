@@ -1,59 +1,212 @@
-# Calisthenics Workout
+# Habit Tracker with Accountability
 
-A personal workout runner built from the *Beginner Calisthenics Program* PDF. Black/yellow theme matching the program, with countdown timers for timed holds and automatic rest timers between every set.
+A full-stack web application for tracking daily habits with built-in accountability features. Share your progress with friends, maintain streaks, and provide proof of completion.
 
 ## Features
 
-- **3 sessions** — Upper Body Plan A (Aesthetic), Upper Body Plan B (Strength), Legs + Abs — all transcribed from the PDF (sets, reps, notes).
-- **Guided runner** — step through every set with target reps and form notes.
-- **Timers for every exercise** — auto rest timer between sets (30/45/60/90/120s) with a countdown ring + beeps; dedicated hold countdowns for timed exercises (Planche Leans, Hollow Body Hold, L-Sit).
-- **Camera rep counter** — on most exercises, tap "📷 Verify reps with camera" to auto-count reps with on-device pose detection (MediaPipe Pose, "full" model). Supported movements: **pushups & dips** (elbow angle), **squats & lunges** (knee angle), **lying leg raises** (hip angle), and **calf raises** (body rise). It counts **down** from your rep goal, **auto-calibrates to your range of motion**, beeps per rep, and shows a live skeleton overlay. Runs entirely in your browser — no video leaves your device. Needs HTTPS and camera permission.
-  - **Perfect-form pushups** — pushups are judged on real form: full depth (chest low), full lockout, and a straight body line. Only clean reps count, with live cues ("Go lower", "Keep your body straight").
-  - **Voice** — toggle 🎤 in the camera to go hands-free: it speaks your rep count out loud and listens for commands ("reset", "done", "close", and "start" in challenges).
-- **Pushup Challenge** — a max-pushups-in-60s AMRAP (clean form only) that generates a **shareable link**. Send it to a friend; they open it, do the challenge, and the app shows who won. No backend — the score is encoded in the URL.
-- **Music** — floating player with **Spotify / Apple / YouTube** tabs (remembers your choice). Spotify = full-track playback via the Web Playback SDK (Premium login, see setup below). Apple Music & YouTube = embedded players; paste any link to swap the playlist. Apple/YouTube play full songs when you're signed in (YouTube needs no login). Stays playing as you move from the home screen into a workout.
-- **Progress log** — sessions saved in your browser (localStorage); home screen shows weekly count and last-done dates.
-- **Weekly split + tips** from the PDF on the home screen.
-- Screen-wake-lock during a session (where supported), mobile-friendly.
+- **User authentication** with email and password
+- **Create and manage daily habits** with descriptions
+- **Daily check-ins** with optional proof/notes for completion
+- **Streak tracking** with flame emoji visual indicators
+- **Accountability system** to add friends and view their habits
+- **Real-time dashboard** showing all your active habits and their current streaks
+- **Responsive mobile-first design** that works on all devices
+- **Friend requests** to build accountability partnerships
 
-## Run locally
+## Tech Stack
 
+### Frontend
+- React 19 with Next.js 15 (App Router)
+- TypeScript for type safety
+- Tailwind CSS 4 for styling
+- Lucide React for icons
+
+### Backend
+- Next.js API Routes
+- Prisma ORM for database access
+- JWT authentication with HTTP-only cookies
+
+### Database
+- PostgreSQL
+
+## Local Setup
+
+### Prerequisites
+- Node.js 18+ and npm
+- PostgreSQL 12+
+- Git
+
+### Installation
+
+1. Clone and navigate to project:
+```bash
+cd habit-tracker
+```
+
+2. Install dependencies:
 ```bash
 npm install
+```
+
+3. Create `.env.local` from template:
+```bash
+cp .env.example .env.local
+```
+
+4. Update `.env.local` with your database URL:
+```
+DATABASE_URL="postgresql://user:password@localhost:5432/habit_tracker"
+JWT_SECRET="your-super-secret-key-change-in-production"
+```
+
+5. Create the PostgreSQL database:
+```bash
+createdb habit_tracker
+```
+
+6. Generate Prisma client:
+```bash
+npm run prisma:generate
+```
+
+7. Push schema to database:
+```bash
+npm run db:push
+```
+
+8. Seed with sample data:
+```bash
+npm run prisma:seed
+```
+
+9. Start development server:
+```bash
 npm run dev
 ```
 
-Open http://localhost:3000
+10. Open [http://localhost:3000](http://localhost:3000)
 
-## Deploy to Vercel
+## Demo Accounts
 
-Option A — CLI:
+After seeding, you can login with:
+
+**Account 1:**
+- Email: `alex@example.com`
+- Password: `password123`
+
+**Account 2:**
+- Email: `jordan@example.com`
+- Password: `password456`
+
+These accounts are already friends and have sample habits with streaks.
+
+## Database Schema
+
+### Users Table
+- `id` (string, primary key)
+- `email` (string, unique)
+- `username` (string, unique)
+- `password` (hashed string)
+- `createdAt`, `updatedAt`
+
+### Habits Table
+- `id` (string, primary key)
+- `title` (string)
+- `description` (string, optional)
+- `frequency` (string: "daily" or "weekly")
+- `userId` (foreign key)
+- `createdAt`, `updatedAt`
+
+### Checkins Table
+- `id` (string, primary key)
+- `date` (date)
+- `proof` (string, optional text note or image URL)
+- `completed` (boolean)
+- `habitId` (foreign key)
+- `userId` (foreign key)
+- `createdAt`, `updatedAt`
+
+### Friendships Table
+- `id` (string, primary key)
+- `requesterId` (foreign key)
+- `recipientId` (foreign key)
+- `status` ("pending", "accepted", or "rejected")
+- `createdAt`, `updatedAt`
+
+## API Endpoints
+
+### Authentication
+- `POST /api/auth/signup` - Create account
+- `POST /api/auth/login` - Login
+- `POST /api/auth/logout` - Logout
+- `GET /api/auth/me` - Get current user
+
+### Habits
+- `GET /api/habits` - Get all user habits with streaks
+- `POST /api/habits` - Create new habit
+- `POST /api/habits/checkin` - Check in on a habit
+
+### Friends
+- `GET /api/friends` - Get list of accepted friends
+- `POST /api/friends` - Send friend request
+- `PATCH /api/friends/[id]` - Accept/reject request
+- `DELETE /api/friends/[id]` - Remove friend
+- `GET /api/friends/habits` - Get friends' habits
+
+## Key Features Explained
+
+### Streak Calculation
+Streaks count consecutive days of check-ins. Missing a day resets the streak. The algorithm sorts check-ins by date and counts backwards from today, stopping at any gap.
+
+### Accountability
+Add friends by username to see their habits and streaks. This creates accountability partnerships where you both stay motivated.
+
+### Proof System
+When checking in, optionally add text notes or image URLs as proof of completion. This helps make the accountability system more credible.
+
+## Available Commands
 
 ```bash
-npm i -g vercel
-vercel        # preview
-vercel --prod # production
+npm run dev              # Start development server
+npm run build            # Build for production
+npm start                # Start production server
+npm run prisma:generate  # Generate Prisma client
+npm run db:push          # Push schema to database
+npm run prisma:seed      # Seed with sample data
+npm run db:studio        # Open Prisma visual explorer
 ```
 
-Option B — Git: push this folder to a GitHub repo, then "Import Project" on vercel.com. Framework preset auto-detects **Next.js** — no config needed.
+## Troubleshooting
 
-## Spotify full-track playback (optional)
+**Database connection error?**
+- Ensure PostgreSQL is running
+- Check DATABASE_URL format in .env.local
+- Verify database exists: `psql -l`
 
-The Music panel has a **Spotify** tab that plays full songs (not 30s previews)
-via the Web Playback SDK. This requires a **Spotify Premium** account to log in
-with, plus a free one-time setup:
+**Prisma client errors?**
+```bash
+npm run prisma:generate
+rm -rf node_modules package-lock.json
+npm install
+```
 
-1. Go to <https://developer.spotify.com/dashboard> → **Create app**.
-2. Name/description: anything. **Redirect URIs** — add both (with trailing slash):
-   - `https://ishansworkout.vercel.app/`  (production)
-   - `http://127.0.0.1:3000/`  (local dev — use `127.0.0.1`, not `localhost`)
-3. Under "Which API/SDKs are you planning to use" tick **Web Playback SDK** and **Web API**. Save.
-4. Copy the **Client ID**.
-5. Set it as an env var named `NEXT_PUBLIC_SPOTIFY_CLIENT_ID`:
-   - Local: create `.env.local` with `NEXT_PUBLIC_SPOTIFY_CLIENT_ID=your_id`
-   - Vercel: `vercel env add NEXT_PUBLIC_SPOTIFY_CLIENT_ID` (Production), then redeploy.
+**Port 3000 already in use?**
+```bash
+npm run dev -- -p 3001
+```
 
-Auth is Authorization Code + PKCE — fully client-side, no secret/backend. The
-Client ID is public, so it's safe in the browser.
+## Project Structure
 
-Built with Next.js 15 + Tailwind CSS v4. No backend.
+```
+src/
+├── app/                # Next.js App Router pages and API routes
+├── components/         # React components (HabitCard, etc.)
+├── hooks/             # Custom React hooks (useAuth)
+├── lib/               # Utilities (auth, database, helpers)
+└── types/             # TypeScript type definitions
+prisma/
+├── schema.prisma      # Database schema
+└── seed.ts            # Sample data
+```
+
+Built with Next.js 15, React 19, TypeScript, Tailwind CSS, and PostgreSQL.
