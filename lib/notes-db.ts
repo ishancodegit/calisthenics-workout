@@ -191,6 +191,24 @@ export async function importAll(backup: Backup): Promise<{ notes: number; notebo
   return { notes: backup.notes?.length ?? 0, notebooks: backup.notebooks?.length ?? 0 };
 }
 
+/**
+ * Ask the browser to keep this data through a storage squeeze.
+ *
+ * Without this, IndexedDB is "best effort": the OS may evict the whole vault
+ * when disk runs low, and the first the user hears of it is an empty notebook.
+ * Chrome grants it silently for engaged or installed sites, Firefox may prompt,
+ * Safari grants it to home-screen apps. It is safe to call on every boot.
+ */
+export async function ensurePersistentStorage(): Promise<"persisted" | "denied" | "unsupported"> {
+  if (typeof navigator === "undefined" || !navigator.storage?.persist) return "unsupported";
+  try {
+    if (await navigator.storage.persisted?.()) return "persisted";
+    return (await navigator.storage.persist()) ? "persisted" : "denied";
+  } catch {
+    return "unsupported";
+  }
+}
+
 /** Rough storage usage, for the footer readout. */
 export async function storageEstimate(): Promise<{ usage: number; quota: number } | null> {
   if (typeof navigator === "undefined" || !navigator.storage?.estimate) return null;

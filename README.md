@@ -31,6 +31,7 @@ the nib is down.
 - It reopens on the page you left, and keeps the screen awake while you write.
 - Same vault as `/notes`, so anything written here shows up there with links,
   search and backlinks, and vice versa.
+- **Back up** in the page index writes the same JSON file the full app does.
 
 **Install it like a device.** On iPad, open `/device` in Safari, Share →
 *Add to Home Screen*. It launches fullscreen with no browser chrome, works with
@@ -96,6 +97,21 @@ after you stop.
 **Export** in the sidebar footer writes a JSON backup of every notebook, note
 and stroke; **Import** merges one back in. A single note can also be saved as
 `.md`. The footer shows how much storage the vault is using.
+
+### Not losing any of it
+
+Browser storage is *best effort* by default: with the disk under pressure the
+browser is free to evict the whole vault, and the first you hear about it is an
+empty notebook. Two things guard against that.
+
+- On boot both apps call `navigator.storage.persist()`, which asks the browser
+  to keep this data through a squeeze. Chrome grants it silently to engaged or
+  installed sites, Firefox may ask, and Safari grants it to apps added to the
+  home screen. When it is refused the sidebar footer says `not durable`, so the
+  state is never a mystery.
+- Once there are five written pages, a quiet strip offers a backup: **Back up**
+  saves the JSON file, **Later** holds it off for a week. It returns if a
+  backup ever gets more than two weeks stale with edits since.
 
 ## Run locally
 

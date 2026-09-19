@@ -4,6 +4,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PAPER_W, newId } from "@/lib/ink";
 import { extractLinks } from "@/lib/markdown";
 import {
+  backupDue,
+  backupReason,
+  downloadBackup,
+  loadBackupState,
+  snoozeBackup,
+  type BackupState,
+} from "@/lib/backup";
+import {
+  ensurePersistentStorage,
   listNotebooks,
   listNotes,
   putNote,
@@ -39,6 +48,8 @@ export default function DeviceApp() {
   const [showIndex, setShowIndex] = useState(false);
   const [resting, setResting] = useState(false);
   const [fit, setFit] = useState({ width: 360, height: 509 });
+  const [backup, setBackup] = useState<BackupState>({ lastBackup: 0, snoozeUntil: 0 });
+  const [durable, setDurable] = useState<"persisted" | "denied" | "unsupported">("unsupported");
 
   const frameRef = useRef<HTMLDivElement | null>(null);
   const notesRef = useRef<Note[]>([]);
@@ -90,6 +101,10 @@ export default function DeviceApp() {
       const startAt = ordered.findIndex((n) => n.id === localStorage.getItem("device-page-id"));
       setIndex(startAt >= 0 ? startAt : Number.isFinite(last) ? Math.min(Math.max(0, last), ordered.length - 1) : ordered.length - 1);
       setReady(true);
+      // These pages exist in one browser on one device: keep the storage from
+      // being evicted, and remember when it was last copied out.
+      void ensurePersistentStorage().then(setDurable);
+      void loadBackupState().then(setBackup);
     })().catch(() => setReady(true));
   }, []);
 
@@ -245,6 +260,9 @@ export default function DeviceApp() {
   }, []);
 
   const label = useMemo(() => (page ? pageLabel(page) : ""), [page]);
+  const nudge = useMemo(() => backupDue(pages, backup), [pages, backup]);
+
+  const backUp = useCallback(async () => setBackup(await downloadBackup()), []);
 
   if (!ready) return <div className="h-dvh bg-white" />;
 
@@ -327,6 +345,24 @@ export default function DeviceApp() {
         )}
       </div>
 
+      {nudge && (
+        <div className="flex shrink-0 items-center gap-2 border-t border-black/10 px-3 py-2 text-[12px] text-black/50">
+          <span className="min-w-0 flex-1 truncate">
+            {backupReason(backup)}
+            {durable !== "persisted" && ", and this browser can clear them"}.
+          </span>
+          <button onClick={backUp} className="shrink-0 rounded border border-black/20 px-2 py-1 text-[12px] hover:bg-black/5">
+            Back up
+          </button>
+          <button
+            onClick={async () => setBackup(await snoozeBackup())}
+            className="shrink-0 rounded px-2 py-1 text-[12px] text-black/35 hover:bg-black/5"
+          >
+            Later
+          </button>
+        </div>
+      )}
+
       {/* bottom strip */}
       <footer
         className="flex h-12 shrink-0 items-center justify-center gap-1 border-t border-black/10 px-2 transition-opacity duration-300"
@@ -383,6 +419,7 @@ export default function DeviceApp() {
           onClose={() => setShowIndex(false)}
           onNew={addPage}
           onDelete={removePage}
+          onBackUp={backUp}
         />
       )}
     </div>
@@ -428,6 +465,7 @@ function PageIndex({
   onClose,
   onNew,
   onDelete,
+  onBackUp,
 }: {
   pages: Note[];
   index: number;
@@ -435,6 +473,7 @@ function PageIndex({
   onClose: () => void;
   onNew: () => void;
   onDelete: (id: string) => void;
+  onBackUp: () => void;
 }) {
   return (
     <div className="absolute inset-0 z-40 flex flex-col bg-[#f4f4f2]">
@@ -448,6 +487,9 @@ function PageIndex({
         <div className="ml-auto flex items-center gap-2">
           <Key onClick={onNew} label="New page" wide>
             + New page
+          </Key>
+          <Key onClick={onBackUp} label="Save a backup file of every page" wide>
+            Back up
           </Key>
           <a href="/notes" className="rounded px-2 py-1 text-[12px] text-black/35 hover:bg-black/5">
             Full app

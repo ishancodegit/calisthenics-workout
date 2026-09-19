@@ -25,9 +25,18 @@ import {
   toggleTask,
 } from "@/lib/markdown";
 import {
+  backupDue,
+  backupReason,
+  downloadBackup,
+  loadBackupState,
+  saveBlob,
+  snoozeBackup,
+  type BackupState,
+} from "@/lib/backup";
+import {
   deleteNote as dbDeleteNote,
   deleteNotebook as dbDeleteNotebook,
-  exportAll,
+  ensurePersistentStorage,
   getInk,
   importAll,
   listNotebooks,
@@ -85,6 +94,8 @@ export default function NotesApp() {
   const [sawPen, setSawPen] = useState(false);
   const [saving, setSaving] = useState<"idle" | "saving" | "saved">("idle");
   const [usage, setUsage] = useState<string>("");
+  const [backup, setBackup] = useState<BackupState>({ lastBackup: 0, snoozeUntil: 0 });
+  const [durable, setDurable] = useState<"persisted" | "denied" | "unsupported">("unsupported");
 
   const paperRef = useRef<HTMLDivElement | null>(null);
   const [paperWidth, setPaperWidth] = useState(720);
@@ -128,6 +139,13 @@ export default function NotesApp() {
   }, []);
 
   // Re-read usage whenever a save lands, which covers both notes and ink.
+  useEffect(() => {
+    // Ask the browser not to evict the vault, and find out when it was last
+    // backed up, so the nudge can be honest about the risk.
+    void ensurePersistentStorage().then(setDurable);
+    void loadBackupState().then(setBackup);
+  }, []);
+
   useEffect(() => {
     storageEstimate().then((e) => {
       if (e) setUsage(`${formatBytes(e.usage)} used`);
@@ -360,6 +378,8 @@ export default function NotesApp() {
     return list;
   }, [notes, activeNotebook, query, pane, tagFilter]);
 
+  const nudge = useMemo(() => backupDue(notes, backup), [notes, backup]);
+
   const backlinks = useMemo(() => {
     if (!active) return [];
     const key = normalizeTitle(active.title);
@@ -407,16 +427,12 @@ export default function NotesApp() {
   /* -------------------------- backup ----------------------------- */
 
   const doExport = useCallback(async () => {
-    const backup = await exportAll();
-    download(
-      `notepad-backup-${new Date().toISOString().slice(0, 10)}.json`,
-      new Blob([JSON.stringify(backup)], { type: "application/json" })
-    );
+    setBackup(await downloadBackup());
   }, []);
 
   const doExportMarkdown = useCallback(() => {
     if (!active) return;
-    download(
+    saveBlob(
       `${(active.title || "untitled").replace(/[^\w -]+/g, "_")}.md`,
       new Blob([`# ${active.title}\n\n${active.body}`], { type: "text/markdown" })
     );
@@ -429,6 +445,7 @@ export default function NotesApp() {
       const [nbs, ns] = await Promise.all([listNotebooks(), listNotes()]);
       setNotebooks(nbs);
       setNotes(ns);
+      setBackup(await loadBackupState());
       alert(`Imported ${n} notes.`);
     } catch (err) {
       alert(`Import failed: ${(err as Error).message}`);
@@ -666,6 +683,26 @@ export default function NotesApp() {
                   </button>
                 </div>
 
+                {nudge && (
+                  <div className="mx-2 mb-2 rounded-lg bg-white/[0.06] p-2.5 text-[11px] leading-snug text-white/60 ring-1 ring-white/10">
+                    <p>
+                      {backupReason(backup)}
+                      {durable !== "persisted" && ", and this browser may clear them to free space"}.
+                    </p>
+                    <div className="mt-1.5 flex gap-2">
+                      <button onClick={doExport} className="rounded bg-[var(--accent)] px-2 py-1 font-bold text-black">
+                        Back up now
+                      </button>
+                      <button
+                        onClick={async () => setBackup(await snoozeBackup())}
+                        className="rounded px-2 py-1 font-bold text-white/45 hover:bg-white/10"
+                      >
+                        Later
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <div className="min-h-0 flex-1 overflow-y-auto pb-4">
                   <NoteList notes={visibleNotes} activeId={activeId} onOpen={openNote} onDelete={removeNote} query={query} />
                 </div>
@@ -673,7 +710,10 @@ export default function NotesApp() {
             )}
 
             <div className="flex items-center justify-between gap-2 border-t border-white/10 px-3 py-2 text-[10px] text-white/35">
-              <span>{usage || `${notes.length} notes`}</span>
+              <span title={durable === "persisted" ? "Storage is marked persistent" : "This browser may clear the vault to free space — keep a backup"}>
+                {usage || `${notes.length} notes`}
+                {durable !== "persisted" && " · not durable"}
+              </span>
               <div className="flex gap-2">
                 <button onClick={doExport} className="hover:text-white" title="Download a backup of every note and stroke">
                   Export
@@ -1459,15 +1499,6 @@ function formatBytes(n: number) {
   if (n < 1024) return `${n} B`;
   if (n < 1024 ** 2) return `${(n / 1024).toFixed(0)} KB`;
   return `${(n / 1024 ** 2).toFixed(1)} MB`;
-}
-
-function download(filename: string, blob: Blob) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function isTyping(target: EventTarget | null) {
