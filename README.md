@@ -16,6 +16,27 @@ A personal workout runner built from the *Beginner Calisthenics Program* PDF. Bl
 - **Weekly split + tips** from the PDF on the home screen.
 - Screen-wake-lock during a session (where supported), mobile-friendly.
 
+## Notes device (`/device`)
+
+The front door for writing. It opens on a blank page and nothing else: no
+colour anywhere, no panels, no menus, two hairline strips that fade back while
+the nib is down.
+
+- **One page at a time**, fitted to the screen in A-series proportions. `‹` `›`
+  or the arrow keys turn pages; `+` starts a new one; `☰` lists them all.
+- **Pen, pencil, eraser, three nib widths, undo.** That is the whole toolbox,
+  and the ink is black.
+- **Pencil only**: a finger never draws, so a resting palm is harmless.
+- **✎ Write / ⌨ Type** on the same page, for when a keyboard is faster.
+- It reopens on the page you left, and keeps the screen awake while you write.
+- Same vault as `/notes`, so anything written here shows up there with links,
+  search and backlinks, and vice versa.
+
+**Install it like a device.** On iPad, open `/device` in Safari, Share →
+*Add to Home Screen*. It launches fullscreen with no browser chrome, works with
+no network (a service worker caches the shell), and keeps your pages in the
+browser's own storage.
+
 ## Notebook (`/notes`)
 
 A second app lives at **/notes**: an Obsidian-style vault in a notebook form

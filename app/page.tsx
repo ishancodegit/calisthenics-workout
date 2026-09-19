@@ -221,16 +221,19 @@ function Home({
 
       {/* Notes CTA */}
       <a
-        href="/notes"
+        href="/device"
         className="mt-3 flex w-full items-center justify-between rounded-2xl bg-[#141414] p-5 text-left ring-1 ring-white/5 transition hover:ring-[var(--accent)]/60 active:scale-[0.99]"
       >
         <span>
-          <span className="block text-lg font-black">📓 Notebook</span>
+          <span className="block text-lg font-black">📓 Notes</span>
           <span className="block text-sm font-medium text-white/55">
-            Linked markdown notes &amp; Apple Pencil handwriting
+            A plain page and an Apple Pencil
           </span>
         </span>
         <span className="text-2xl font-black text-[var(--accent)]">▸</span>
+      </a>
+      <a href="/notes" className="mt-2 block text-center text-xs text-white/35 hover:text-white/70">
+        Full notebook: links, search, graph →
       </a>
 
       {/* Pick a session */}

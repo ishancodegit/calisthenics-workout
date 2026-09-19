@@ -15,9 +15,7 @@ import {
   PAPER_W,
   TOOLS,
   newId,
-  translateStroke,
   type InkToolId,
-  type Stroke,
 } from "@/lib/ink";
 import {
   excerpt,
@@ -34,7 +32,6 @@ import {
   importAll,
   listNotebooks,
   listNotes,
-  putInk,
   putNote,
   putNotebook,
   putNotes,
@@ -44,7 +41,8 @@ import {
   type Notebook,
   type PaperStyle,
 } from "@/lib/notes-db";
-import InkLayer, { type InkOp, type PenTool } from "./InkLayer";
+import InkLayer, { type PenTool } from "./InkLayer";
+import { useInk } from "./useInk";
 
 const GraphView = dynamic(() => import("./GraphView"), { ssr: false });
 
@@ -63,9 +61,6 @@ export default function NotesApp() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeNotebook, setActiveNotebook] = useState<string | null>(null);
-  const [strokes, setStrokes] = useState<Stroke[]>([]);
-  const [undoStack, setUndoStack] = useState<InkOp[]>([]);
-  const [redoStack, setRedoStack] = useState<InkOp[]>([]);
   const [ready, setReady] = useState(false);
 
   const [mode, setMode] = useState<Mode>("write");
@@ -132,11 +127,12 @@ export default function NotesApp() {
     });
   }, []);
 
+  // Re-read usage whenever a save lands, which covers both notes and ink.
   useEffect(() => {
     storageEstimate().then((e) => {
       if (e) setUsage(`${formatBytes(e.usage)} used`);
     });
-  }, [notes, strokes]);
+  }, [notes, saving]);
 
   /* --------------------------- paper size ------------------------ */
 
@@ -164,25 +160,6 @@ export default function NotesApp() {
 
   /* ------------------------------ ink ---------------------------- */
 
-  useEffect(() => {
-    let cancelled = false;
-    strokesRef.current = [];
-    undoRef.current = [];
-    redoRef.current = [];
-    setStrokes([]);
-    setUndoStack([]);
-    setRedoStack([]);
-    if (!activeId) return;
-    getInk(activeId).then((ink) => {
-      if (cancelled) return;
-      strokesRef.current = ink?.strokes ?? [];
-      setStrokes(strokesRef.current);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeId]);
-
   const saveNoteSoon = useDebounced(async (note: Note) => {
     setSaving("saving");
     await putNote(note);
@@ -192,67 +169,26 @@ export default function NotesApp() {
   const notesRef = useRef<Note[]>([]);
   notesRef.current = notes;
 
-  const saveInkSoon = useDebounced(async (noteId: string, list: Stroke[]) => {
-    setSaving("saving");
-    await putInk({ noteId, strokes: list, updated: Date.now() });
-    setSaving("saved");
-  }, 500);
-
-  // Strokes and the undo history are mirrored in refs: pointer events land
-  // faster than React re-renders, and a state updater has to stay pure.
-  const strokesRef = useRef<Stroke[]>([]);
-  const undoRef = useRef<InkOp[]>([]);
-  const redoRef = useRef<InkOp[]>([]);
-
-  const commitStrokes = useCallback(
-    (noteId: string, next: Stroke[]) => {
-      strokesRef.current = next;
-      setStrokes(next);
-      saveInkSoon(noteId, next);
+  /** Drawing counts as editing the note: stamp it so the list sorts and marks it. */
+  const stampInk = useCallback(
+    (noteId: string) => {
+      const note = notesRef.current.find((n) => n.id === noteId);
+      if (!note) return;
+      const stamped: Note = { ...note, hasInk: true, updated: Date.now() };
+      setNotes((prev) => prev.map((n) => (n.id === stamped.id ? stamped : n)));
+      saveNoteSoon(stamped);
     },
-    [saveInkSoon]
+    [saveNoteSoon]
   );
 
-  const applyOp = useCallback(
-    (op: InkOp) => {
-      if (!activeId) return;
-      commitStrokes(activeId, reduceOp(strokesRef.current, op));
-      undoRef.current = [...undoRef.current.slice(-199), op];
-      redoRef.current = [];
-      setUndoStack(undoRef.current);
-      setRedoStack(redoRef.current);
-      // Drawing is an edit: stamp the note so the list sorts and marks it.
-      const note = notesRef.current.find((n) => n.id === activeId);
-      if (note) {
-        const stamped: Note = { ...note, hasInk: true, updated: Date.now() };
-        setNotes((prev) => prev.map((n) => (n.id === stamped.id ? stamped : n)));
-        saveNoteSoon(stamped);
-      }
-    },
-    [activeId, commitStrokes, saveNoteSoon]
-  );
-
-  const undoInk = useCallback(() => {
-    const op = undoRef.current[undoRef.current.length - 1];
-    if (!op || !activeId) return;
-    undoRef.current = undoRef.current.slice(0, -1);
-    redoRef.current = [...redoRef.current, op];
-    setUndoStack(undoRef.current);
-    setRedoStack(redoRef.current);
-    commitStrokes(activeId, reduceOp(strokesRef.current, invertOp(op)));
-  }, [activeId, commitStrokes]);
-
-  const redoInk = useCallback(() => {
-    const op = redoRef.current[redoRef.current.length - 1];
-    if (!op || !activeId) return;
-    redoRef.current = redoRef.current.slice(0, -1);
-    undoRef.current = [...undoRef.current, op];
-    setUndoStack(undoRef.current);
-    setRedoStack(redoRef.current);
-    commitStrokes(activeId, reduceOp(strokesRef.current, op));
-  }, [activeId, commitStrokes]);
-
-  /* ----------------------------- notes --------------------------- */
+  const {
+    strokes,
+    applyOp,
+    undo: undoInk,
+    redo: redoInk,
+    canUndo,
+    canRedo,
+  } = useInk(activeId, { onEdit: stampInk, onSaveState: setSaving });
 
   const updateActive = useCallback(
     (patch: Partial<Note>) => {
@@ -570,6 +506,13 @@ export default function NotesApp() {
         >
           ← Workout
         </Link>
+        <Link
+          href="/device"
+          title="Plain paper, no chrome"
+          className="hidden rounded-lg px-2 py-1.5 text-xs font-bold text-white/50 hover:bg-white/10 hover:text-white sm:block"
+        >
+          Device
+        </Link>
 
         <div className="mx-1 min-w-0 flex-1">
           {active ? (
@@ -771,8 +714,8 @@ export default function NotesApp() {
               setPencilOnly={setPencilOnly}
               snap={snap}
               setSnap={setSnap}
-              canUndo={undoStack.length > 0}
-              canRedo={redoStack.length > 0}
+              canUndo={canUndo}
+              canRedo={canRedo}
               onUndo={undoInk}
               onRedo={redoInk}
               strokeCount={strokes.length}
@@ -1341,22 +1284,6 @@ function CommandPalette({
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
-
-function reduceOp(list: Stroke[], op: InkOp): Stroke[] {
-  if (op.type === "add") return [...list, ...op.strokes];
-  if (op.type === "erase") {
-    const ids = new Set(op.strokes.map((s) => s.id));
-    return list.filter((s) => !ids.has(s.id));
-  }
-  const ids = new Set(op.ids);
-  return list.map((s) => (ids.has(s.id) ? translateStroke(s, op.dx, op.dy) : s));
-}
-
-function invertOp(op: InkOp): InkOp {
-  if (op.type === "add") return { type: "erase", strokes: op.strokes };
-  if (op.type === "erase") return { type: "add", strokes: op.strokes };
-  return { type: "move", ids: op.ids, dx: -op.dx, dy: -op.dy };
-}
 
 function searchNotes(notes: Note[], query: string): Note[] {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
