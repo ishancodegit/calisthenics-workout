@@ -23,3 +23,167 @@ body {
   100% { transform: scale(0.97); }
 }
 .timer-pulse { animation: pulse-ring 2s ease-in-out infinite; }
+
+/* ------------------------------------------------------------------ */
+/* Notepad — paper, markdown and links                                 */
+/* ------------------------------------------------------------------ */
+
+:root {
+  --paper-font: ui-serif, Georgia, "Iowan Old Style", "Times New Roman", serif;
+}
+
+.notepad-page textarea,
+.notepad-page .md-body {
+  font-family: var(--paper-font);
+}
+
+.notepad-dark-text textarea {
+  color: #eaeaea;
+}
+.notepad-dark-text textarea::placeholder {
+  color: rgba(255, 255, 255, 0.3);
+}
+
+.md-body > *:first-child {
+  margin-top: 0;
+}
+.md-body .md-p {
+  margin: 0 0 0.85em;
+}
+.md-body .md-h {
+  font-weight: 800;
+  line-height: 1.25;
+  margin: 1.4em 0 0.5em;
+}
+.md-body .md-h1 { font-size: 1.7em; }
+.md-body .md-h2 { font-size: 1.35em; }
+.md-body .md-h3 { font-size: 1.15em; }
+.md-body .md-h4,
+.md-body .md-h5,
+.md-body .md-h6 { font-size: 1em; opacity: 0.85; }
+
+.md-body .md-list {
+  margin: 0 0 0.85em;
+  padding-left: 1.4em;
+  list-style: disc;
+}
+.md-body ol.md-list { list-style: decimal; }
+.md-body .md-list .md-list { margin-bottom: 0; }
+.md-body li { margin: 0.15em 0; }
+
+.md-body .md-task {
+  list-style: none;
+  margin-left: -1.2em;
+  display: flex;
+  gap: 0.5em;
+  align-items: flex-start;
+}
+.md-body .md-task input {
+  margin-top: 0.35em;
+  accent-color: #2f6fed;
+  width: 0.95em;
+  height: 0.95em;
+}
+.md-body .md-task-done {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+
+.md-body .md-quote {
+  border-left: 3px solid rgba(40, 70, 120, 0.35);
+  padding-left: 0.9em;
+  margin: 0 0 0.85em;
+  opacity: 0.8;
+  font-style: italic;
+}
+
+.md-body .md-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.88em;
+  background: rgba(0, 0, 0, 0.07);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+.md-body .md-pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 10px;
+  padding: 0.85em 1em;
+  margin: 0 0 0.85em;
+  overflow-x: auto;
+}
+
+.md-body .md-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 1em;
+  font-size: 0.95em;
+}
+.md-body .md-table th,
+.md-body .md-table td {
+  border: 1px solid rgba(40, 70, 120, 0.2);
+  padding: 0.35em 0.6em;
+  text-align: left;
+}
+.md-body .md-table th {
+  background: rgba(40, 70, 120, 0.07);
+  font-weight: 700;
+}
+
+.md-body .md-hr {
+  border: 0;
+  border-top: 1px solid rgba(40, 70, 120, 0.25);
+  margin: 1.4em 0;
+}
+
+.md-body .md-mark {
+  background: rgba(245, 224, 0, 0.5);
+  color: inherit;
+  padding: 0 0.15em;
+  border-radius: 3px;
+}
+
+.md-body .md-img {
+  max-width: 100%;
+  border-radius: 8px;
+}
+
+.md-body .md-link {
+  color: #2f6fed;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.md-body .wikilink {
+  color: #5b46d8;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(91, 70, 216, 0.4);
+  cursor: pointer;
+}
+.md-body .wikilink-new {
+  color: #9a8fd6;
+  border-bottom-style: dashed;
+}
+.md-body .md-tag {
+  color: #1f7a4d;
+  background: rgba(31, 157, 85, 0.12);
+  border-radius: 999px;
+  padding: 0.05em 0.5em;
+  font-size: 0.9em;
+  text-decoration: none;
+}
+
+/* dark paper */
+.md-body.md-dark .md-quote { border-left-color: rgba(255, 255, 255, 0.25); }
+.md-body.md-dark .md-code,
+.md-body.md-dark .md-pre { background: rgba(255, 255, 255, 0.08); }
+.md-body.md-dark .md-table th,
+.md-body.md-dark .md-table td { border-color: rgba(255, 255, 255, 0.15); }
+.md-body.md-dark .md-table th { background: rgba(255, 255, 255, 0.06); }
+.md-body.md-dark .md-hr { border-top-color: rgba(255, 255, 255, 0.18); }
+.md-body.md-dark .md-link { color: #7cc4ff; }
+.md-body.md-dark .wikilink { color: #b7a8ff; border-bottom-color: rgba(183, 168, 255, 0.4); }
+.md-body.md-dark .wikilink-new { color: #8e84b8; }
+.md-body.md-dark .md-tag { color: #5ce1a6; background: rgba(92, 225, 166, 0.14); }
+.md-body.md-dark .md-mark { background: rgba(245, 224, 0, 0.35); }

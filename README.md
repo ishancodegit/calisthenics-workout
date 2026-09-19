@@ -16,6 +16,66 @@ A personal workout runner built from the *Beginner Calisthenics Program* PDF. Bl
 - **Weekly split + tips** from the PDF on the home screen.
 - Screen-wake-lock during a session (where supported), mobile-friendly.
 
+## Notebook (`/notes`)
+
+A second app lives at **/notes**: an Obsidian-style vault in a notebook form
+factor, built for the Apple Pencil. Open it from the 📓 Notebook card on the
+home screen.
+
+### Three modes, one page
+
+| Mode | What you get |
+| --- | --- |
+| **✎ Write** | Markdown with live shortcuts — ⌘B bold, ⌘I italic, ⌘E ==highlight==, ⌘L `[[link]]`, Tab to indent, Enter continues bullets, numbers and checkboxes |
+| **👁 Read** | Rendered markdown: headings, tables, code fences, quotes, images, task boxes you can tick with a tap |
+| **✍️ Draw** | The Pencil layer, sitting *on top of* your text so you can annotate what you typed |
+
+The ink layer is always visible — only its input is switched off outside Draw
+mode — so a page can be half typed, half handwritten.
+
+### Apple Pencil
+
+- **Pressure and tilt.** The pen tapers with pressure; the pencil widens as you
+  tilt it (via `altitudeAngle`, with a `tiltX`/`tiltY` fallback). Coalesced
+  pointer events are replayed, so all ~240 samples a second shape the line
+  rather than the handful React would otherwise see.
+- **Palm rejection (✋ Palm).** On by default: fingers scroll, only the Pencil
+  draws. Turn it off to draw with touch.
+- **Stroke eraser.** Removes whole strokes, not pixels. The barrel button and a
+  pointer that reports itself as an eraser switch to it mid-stroke.
+- **Lasso (⬚).** Circle some ink to select it, drag to move it, Delete or
+  Backspace to remove it.
+- **Shape snap (📐).** Draw a rough line, circle or box and it straightens the
+  moment you lift. Near-horizontal and near-vertical lines snap flat.
+- **Vector ink.** Strokes are stored in page space (1000 units wide), so they
+  stay sharp at any zoom and identical across iPad, phone and desktop.
+- Undo/redo (⌘Z / ⇧⌘Z) covers drawing, erasing and moving.
+
+### The Obsidian part
+
+- `[[Wikilinks]]` with autocomplete — type `[[` and pick a note. `[[Note|alias]]`
+  and `[[Note#heading]]` both work.
+- Unresolved links are still links: tap one and the note is created.
+- **Backlinks**, outgoing links and a document outline in the right panel.
+- **Graph view** of the whole vault in the sidebar — tap a node to open it.
+- `#tags` anywhere in a line, indexed in the sidebar.
+- Renaming a note rewrites every `[[link]]` that pointed at its old title.
+- **⌘K** quick switcher, **⌘N** new note, **📅 Today** for a daily note.
+- Notebooks group notes; each page picks its own ruling (ruled / grid / dots /
+  plain) and tint (cream / white / slate).
+
+### Storage
+
+Everything is in **IndexedDB** in your browser — no account, no server. Notes
+and ink are kept in separate stores, so the sidebar, search, backlinks and graph
+never load a single stroke: thousands of notes stay fast while handwriting is
+fetched only for the page you have open. Both are saved automatically a beat
+after you stop.
+
+**Export** in the sidebar footer writes a JSON backup of every notebook, note
+and stroke; **Import** merges one back in. A single note can also be saved as
+`.md`. The footer shows how much storage the vault is using.
+
 ## Run locally
 
 ```bash

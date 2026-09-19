@@ -219,6 +219,20 @@ function Home({
         <span className="text-2xl font-black">▸</span>
       </button>
 
+      {/* Notes CTA */}
+      <a
+        href="/notes"
+        className="mt-3 flex w-full items-center justify-between rounded-2xl bg-[#141414] p-5 text-left ring-1 ring-white/5 transition hover:ring-[var(--accent)]/60 active:scale-[0.99]"
+      >
+        <span>
+          <span className="block text-lg font-black">📓 Notebook</span>
+          <span className="block text-sm font-medium text-white/55">
+            Linked markdown notes &amp; Apple Pencil handwriting
+          </span>
+        </span>
+        <span className="text-2xl font-black text-[var(--accent)]">▸</span>
+      </a>
+
       {/* Pick a session */}
       <div className="mt-8">
         <SectionTitle>Start a Session</SectionTitle>
