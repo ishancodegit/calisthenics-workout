@@ -1,0 +1,49 @@
+name: Trading Agent
+
+on:
+  schedule:
+    # Cron is always UTC and does NOT follow US daylight saving. 14:30 UTC is
+    # 9:30am ET in winter (EST) but 10:30am ET in summer (EDT). Shift to
+    # '30 13 * * 1-5' during EDT if you need the exact market open.
+    - cron: '30 14 * * 1-5'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  trading:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run trading agent
+        env:
+          TRADING_API_KEY: ${{ secrets.TRADING_API_KEY }}
+          TRADING_API_SECRET: ${{ secrets.TRADING_API_SECRET }}
+          PAPER_TRADING: ${{ secrets.PAPER_TRADING || 'true' }}
+          MAX_DAILY_LOSS_PERCENT: ${{ secrets.MAX_DAILY_LOSS_PERCENT || '2' }}
+          MAX_POSITION_SIZE_PERCENT: ${{ secrets.MAX_POSITION_SIZE_PERCENT || '5' }}
+          MAX_OPEN_POSITIONS: ${{ secrets.MAX_OPEN_POSITIONS || '5' }}
+          MIN_STOP_LOSS_PERCENT: ${{ secrets.MIN_STOP_LOSS_PERCENT || '1.5' }}
+          LOG_PATH: ./logs/trading-agent.log
+        run: npm run trading-agent:run
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trading-logs-${{ github.run_number }}
+          path: logs/
+          retention-days: 90

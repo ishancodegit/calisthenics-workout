@@ -1,6 +1,15 @@
-# Safe Daytrading AI Agent
+# Safe Trading Agent
 
-A production-ready TypeScript-based trading agent with built-in risk management, position limits, and safety guardrails.
+A TypeScript trading agent with built-in risk management, position limits, and
+safety guardrails. Timeframe-agnostic: the same code handles swing and position
+trading depending on how often you schedule it.
+
+**Deployment:** runs on GitHub Actions on a schedule you pick. See
+[DEPLOY_GITHUB_ACTIONS.md](./DEPLOY_GITHUB_ACTIONS.md).
+
+**Status:** the strategy in `run.ts` is a scaffold using mock price data. It is
+wired end to end and safe to run, but you must connect a real market-data source
+before it can make meaningful decisions.
 
 ## Core Safety Features
 

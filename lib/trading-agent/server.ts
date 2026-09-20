@@ -3,7 +3,7 @@ import { SafeTradingAgent, TradingConfig } from './index';
 
 const PORT = process.env.PORT || 3000;
 const PAPER_TRADING = process.env.PAPER_TRADING !== 'false';
-const LOG_PATH = process.env.LOG_PATH || '/app/logs/trading-agent.log';
+const LOG_PATH = process.env.LOG_PATH || './logs/trading-agent.log';
 
 // Load configuration from environment
 const config: TradingConfig = {
