@@ -18,7 +18,7 @@ Algorithmic trading involves significant financial risk. This agent is designed 
 
 ```typescript
 // CORRECT: Use environment variables
-const apiKey = process.env.TRADING_API_KEY;
+const apiKey = process.env.ALPACA_API_KEY;
 
 // WRONG: Never hardcode keys
 const apiKey = 'sk_live_abc123...';

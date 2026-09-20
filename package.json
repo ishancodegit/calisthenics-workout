@@ -6,8 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "trading-agent": "tsx lib/trading-agent/server.ts",
-    "trading-agent:run": "tsx lib/trading-agent/run.ts"
+    "trading-agent:run": "tsx lib/trading-agent/run.ts",
+    "trading-agent:test": "tsx lib/trading-agent/__tests__/indicators.test.ts && tsx lib/trading-agent/__tests__/risk-manager.test.ts"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "0.10.18",

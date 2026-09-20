@@ -1,131 +1,114 @@
 import { MarketConditions, TradeSignal } from './types';
 
+const OVERSOLD = 30;
+const OVERBOUGHT = 70;
+const MAX_TRADEABLE_VOLATILITY = 0.08;
+const MIN_AVERAGE_VOLUME = 100_000;
+
 export class MarketAnalyzer {
   analyzeMarketConditions(
-    prices: number[],
+    closes: number[],
     volumes: number[],
     rsi: number,
-    macd: number
+    macdHistogram: number
   ): MarketConditions {
-    const volatility = this.calculateVolatility(prices);
-    const trend = this.determineTrend(prices);
-    const avgVolume = volumes.reduce((a, b) => a + b, 0) / volumes.length;
-
     return {
-      volatility,
-      trend,
-      volume: avgVolume,
+      volatility: this.calculateVolatility(closes),
+      trend: this.determineTrend(closes),
+      averageVolume: volumes.reduce((a, b) => a + b, 0) / volumes.length,
       rsi,
-      macd,
+      macdHistogram,
     };
   }
 
-  generateSignal(
-    symbol: string,
-    marketConditions: MarketConditions,
-    priceHistory: number[]
-  ): TradeSignal {
-    const signals = [];
-    let confidence = 0;
+  generateSignal(symbol: string, conditions: MarketConditions): TradeSignal {
+    const reasons: string[] = [];
+    let score = 0;
 
-    if (this.isOversold(marketConditions.rsi)) {
-      signals.push('oversold');
-      confidence += 0.3;
+    if (conditions.rsi < OVERSOLD) {
+      reasons.push(`oversold (RSI ${conditions.rsi.toFixed(1)})`);
+      score += 0.35;
+    } else if (conditions.rsi > OVERBOUGHT) {
+      reasons.push(`overbought (RSI ${conditions.rsi.toFixed(1)})`);
+      score -= 0.35;
     }
 
-    if (this.isOverbought(marketConditions.rsi)) {
-      signals.push('overbought');
-      confidence -= 0.3;
+    if (conditions.macdHistogram > 0) {
+      reasons.push('MACD above signal');
+      score += 0.25;
+    } else if (conditions.macdHistogram < 0) {
+      reasons.push('MACD below signal');
+      score -= 0.25;
     }
 
-    if (marketConditions.macd > 0) {
-      signals.push('bullish_macd');
-      confidence += 0.2;
+    if (conditions.trend === 'bullish') {
+      reasons.push('uptrend');
+      score += 0.2;
+    } else if (conditions.trend === 'bearish') {
+      reasons.push('downtrend');
+      score -= 0.2;
     }
 
-    if (marketConditions.macd < 0) {
-      signals.push('bearish_macd');
-      confidence -= 0.2;
-    }
+    score = Math.max(-1, Math.min(1, score));
 
-    if (marketConditions.trend === 'bullish') {
-      confidence += 0.2;
-    } else if (marketConditions.trend === 'bearish') {
-      confidence -= 0.2;
-    }
-
-    confidence = Math.max(-1, Math.min(1, confidence));
-
-    const action = confidence > 0.3 ? 'buy' : confidence < -0.3 ? 'sell' : 'hold';
-    const riskLevel = this.assessRiskLevel(marketConditions);
-    const suggestedQuantity = this.calculateQuantity(confidence, riskLevel);
+    const action = score >= 0.3 ? 'buy' : score <= -0.3 ? 'sell' : 'hold';
 
     return {
       symbol,
       action,
-      confidence: Math.abs(confidence),
-      reason: signals.join(', '),
-      suggestedQuantity,
-      riskLevel,
+      confidence: Math.abs(score),
+      reason: reasons.length ? reasons.join(', ') : 'no directional signal',
+      riskLevel: this.assessRiskLevel(conditions),
     };
   }
 
-  private calculateVolatility(prices: number[]): number {
-    if (prices.length < 2) return 0;
+  isTradingConditionFavorable(conditions: MarketConditions): { ok: boolean; reason?: string } {
+    if (conditions.volatility > MAX_TRADEABLE_VOLATILITY) {
+      return {
+        ok: false,
+        reason: `Volatility ${(conditions.volatility * 100).toFixed(1)}% above ${MAX_TRADEABLE_VOLATILITY * 100}% ceiling`,
+      };
+    }
 
-    const mean = prices.reduce((a, b) => a + b) / prices.length;
-    const variance = prices.reduce((sq, n) => sq + Math.pow(n - mean, 2), 0) / prices.length;
-    return Math.sqrt(variance) / mean;
+    if (conditions.averageVolume < MIN_AVERAGE_VOLUME) {
+      return {
+        ok: false,
+        reason: `Average volume ${Math.round(conditions.averageVolume)} below ${MIN_AVERAGE_VOLUME} floor`,
+      };
+    }
+
+    return { ok: true };
   }
 
-  private determineTrend(prices: number[]): 'bullish' | 'bearish' | 'neutral' {
-    if (prices.length < 3) return 'neutral';
+  /** Standard deviation of daily returns, not of raw price. */
+  private calculateVolatility(closes: number[]): number {
+    if (closes.length < 2) return 0;
 
-    const shortTermAvg = prices.slice(-5).reduce((a, b) => a + b) / 5;
-    const longTermAvg = prices.reduce((a, b) => a + b) / prices.length;
+    const returns: number[] = [];
+    for (let i = 1; i < closes.length; i++) {
+      returns.push((closes[i] - closes[i - 1]) / closes[i - 1]);
+    }
 
-    const diff = ((shortTermAvg - longTermAvg) / longTermAvg) * 100;
+    const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
+    const variance = returns.reduce((sum, r) => sum + (r - mean) ** 2, 0) / returns.length;
+    return Math.sqrt(variance);
+  }
 
-    if (diff > 2) return 'bullish';
-    if (diff < -2) return 'bearish';
+  private determineTrend(closes: number[]): 'bullish' | 'bearish' | 'neutral' {
+    if (closes.length < 20) return 'neutral';
+
+    const short = closes.slice(-5).reduce((a, b) => a + b, 0) / 5;
+    const long = closes.slice(-20).reduce((a, b) => a + b, 0) / 20;
+    const diff = ((short - long) / long) * 100;
+
+    if (diff > 1) return 'bullish';
+    if (diff < -1) return 'bearish';
     return 'neutral';
   }
 
-  private isOversold(rsi: number): boolean {
-    return rsi < 30;
-  }
-
-  private isOverbought(rsi: number): boolean {
-    return rsi > 70;
-  }
-
-  private assessRiskLevel(marketConditions: MarketConditions): 'low' | 'medium' | 'high' {
-    if (marketConditions.volatility > 0.05 || Math.abs(marketConditions.rsi - 50) > 30) {
-      return 'high';
-    }
-    if (marketConditions.volatility > 0.02) {
-      return 'medium';
-    }
+  private assessRiskLevel(conditions: MarketConditions): 'low' | 'medium' | 'high' {
+    if (conditions.volatility > 0.04) return 'high';
+    if (conditions.volatility > 0.02) return 'medium';
     return 'low';
-  }
-
-  private calculateQuantity(confidence: number, riskLevel: 'low' | 'medium' | 'high'): number {
-    const baseQuantity = 1;
-    const confidenceMultiplier = confidence;
-    const riskMultiplier = riskLevel === 'low' ? 1 : riskLevel === 'medium' ? 0.7 : 0.4;
-
-    return Math.round(baseQuantity * confidenceMultiplier * riskMultiplier * 100) / 100;
-  }
-
-  isTradingConditionFavorable(marketConditions: MarketConditions): boolean {
-    if (marketConditions.volatility > 0.1) {
-      return false;
-    }
-
-    if (marketConditions.volume < 100000) {
-      return false;
-    }
-
-    return true;
   }
 }

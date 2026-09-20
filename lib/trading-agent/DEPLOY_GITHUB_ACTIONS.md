@@ -19,17 +19,30 @@ Go to your GitHub repo settings:
 2. Click **New repository secret**
 3. Add these secrets:
 
-| Secret Name | Value | Example |
-|-------------|-------|---------|
-| `TRADING_API_KEY` | Your broker API key | `pk_live_abc123...` |
-| `TRADING_API_SECRET` | Your broker API secret | `sk_live_xyz789...` |
-| `PAPER_TRADING` | `true` (keep for testing) | `true` |
-| `MAX_DAILY_LOSS_PERCENT` | Max daily loss % | `2` |
-| `MAX_POSITION_SIZE_PERCENT` | Max position size % | `5` |
-| `MAX_OPEN_POSITIONS` | Max concurrent trades | `5` |
-| `MIN_STOP_LOSS_PERCENT` | Minimum stop-loss % | `1.5` |
+Only the credentials need to be **secrets**:
 
-**Important**: Always start with `PAPER_TRADING=true`
+| Secret | Value |
+|---|---|
+| `ALPACA_API_KEY` | Paper key from [Alpaca's paper dashboard](https://app.alpaca.markets/paper/dashboard/overview) |
+| `ALPACA_API_SECRET` | Paper secret (shown once at generation) |
+
+Everything else is a non-sensitive limit, so set it as a repository **variable**
+(Settings → Secrets and variables → Actions → *Variables* tab) where you can
+read it back later. All of them have safe defaults, so you can skip this
+entirely to start:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PAPER_TRADING` | `true` | `false` points at real money |
+| `SYMBOLS` | `AAPL,MSFT,GOOGL` | Allowlist of tickers |
+| `MAX_DAILY_LOSS_PERCENT` | `2` | Stop opening positions past this daily loss |
+| `MAX_POSITION_SIZE_PERCENT` | `5` | Cap per position, as % of equity |
+| `MAX_OPEN_POSITIONS` | `5` | Max concurrent positions |
+| `MIN_STOP_LOSS_PERCENT` | `2` | Bracket stop distance from entry |
+| `MIN_CONFIDENCE` | `0.5` | Ignore weaker signals |
+
+**Paper keys cannot touch real money.** Alpaca issues separate keys for paper
+and live accounts, so a paper key is a hard boundary, not just a flag.
 
 ### Step 2: Configure Schedule
 
@@ -205,21 +218,31 @@ GitHub sends emails on workflow failures by default.
 - Check Actions tab for errors
 - Ensure repo has Actions enabled
 
-### Secrets not found
+### Credentials not set
 ```
-Error: TRADING_API_KEY not set
+Trading cycle failed: ALPACA_API_KEY and ALPACA_API_SECRET must be set
 ```
-Fix: Add secret in Settings → Secrets → Actions
+Fix: add both under Settings → Secrets and variables → Actions → *Secrets*.
+
+### 401 from Alpaca
+```
+Trading cycle failed: Alpaca GET /v2/clock failed: 401
+```
+The keys are wrong or are live keys used against the paper endpoint (the two
+are not interchangeable). Regenerate from the paper dashboard.
+
+### Run says "Not trading: Market closed"
+Expected outside US market hours. Cron is UTC and does not follow daylight
+saving, so a schedule that lands inside the session in winter can fall outside
+it in summer. See the comment at the top of the workflow.
 
 ### Build fails
 ```bash
-# Test locally first
+# Reproduce locally
 npm ci
+npm run trading-agent:test
 npm run trading-agent:run
 ```
-
-### Logs not appearing
-Check that `logs/` directory exists and workflow has write permissions.
 
 ## Security Best Practices
 
@@ -245,26 +268,31 @@ Check that `logs/` directory exists and workflow has write permissions.
    - Check Actions tab weekly
    - Review all trades in logs
 
-## Going Live Checklist
+## Going live
 
-Before setting `PAPER_TRADING=false`:
+Going live needs two independent settings, not one:
 
-- [ ] Ran in paper mode for 2+ weeks
-- [ ] Reviewed all logs
-- [ ] Win rate > 50%
-- [ ] No unexpected behavior
-- [ ] Stop-losses working
-- [ ] Position sizes correct
-- [ ] Risk limits enforced
-- [ ] You understand the strategy
-- [ ] Can monitor results daily
-- [ ] Have kill-switch plan
+1. Repository **variable** `PAPER_TRADING` = `false`
+2. Repository **secret** `CONFIRM_LIVE_TRADING` = `I_UNDERSTAND_THE_RISK`
+3. Replace `ALPACA_API_KEY` / `ALPACA_API_SECRET` with **live** account keys
 
-To go live:
-1. Update `PAPER_TRADING` secret to `false`
-2. Start with small position sizes
-3. Monitor first week closely
-4. Scale gradually if profitable
+Setting only the first makes the agent refuse to start, by design.
+
+Before you do any of that, be honest about the evidence you actually have:
+
+- [ ] Months, not weeks, of paper results — a two-week sample cannot separate a
+      working strategy from a lucky one
+- [ ] Results compared against simply holding the same symbols; if buy-and-hold
+      wins, the agent is subtracting value
+- [ ] You have read `run.ts` and `market-analyzer.ts` and can explain why each
+      signal fires
+- [ ] Stop-losses observed actually filling on Alpaca, not merely submitted
+- [ ] A loss you would accept without changing anything, decided in advance
+- [ ] Money you can lose entirely without it mattering
+
+The strategy here is a plain RSI + MACD + trend score. It has not been
+backtested and carries no demonstrated edge. Paper trading is a fine permanent
+home for it.
 
 ## Advanced: Multiple Strategies
 

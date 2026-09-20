@@ -6,41 +6,27 @@ export interface TradingConfig {
   maxPositionSizePercent: number;
   maxOpenPositions: number;
   minStopLossPercent: number;
-  enableAutoStopLoss: boolean;
-  enableRiskManagement: boolean;
   maxLeverage: number;
-  allowedSymbols?: string[];
+  symbols: string[];
+  minConfidence: number;
 }
 
 export interface MarketConditions {
   volatility: number;
   trend: 'bullish' | 'bearish' | 'neutral';
-  volume: number;
+  averageVolume: number;
   rsi: number;
-  macd: number;
+  macdHistogram: number;
 }
 
 export interface Position {
-  id: string;
   symbol: string;
   quantity: number;
   entryPrice: number;
   currentPrice: number;
-  stopLoss: number;
-  takeProfit?: number;
-  createdAt: Date;
-  status: 'open' | 'closed';
-}
-
-export interface Trade {
-  id: string;
-  symbol: string;
-  type: 'buy' | 'sell';
-  quantity: number;
-  price: number;
-  timestamp: Date;
-  reason: string;
-  paperTrading: boolean;
+  marketValue: number;
+  unrealizedPnL: number;
+  side: 'long' | 'short';
 }
 
 export interface TradeSignal {
@@ -48,23 +34,15 @@ export interface TradeSignal {
   action: 'buy' | 'sell' | 'hold';
   confidence: number;
   reason: string;
-  suggestedQuantity: number;
   riskLevel: 'low' | 'medium' | 'high';
 }
 
+/** Live account state as reported by the broker. Never derived locally. */
 export interface PortfolioState {
-  totalValue: number;
+  equity: number;
   cash: number;
+  buyingPower: number;
   positions: Position[];
   dailyPnL: number;
-  winRate: number;
-  totalTrades: number;
-}
-
-export interface TradingMetrics {
-  maxDrawdown: number;
-  sharpeRatio: number;
-  winRate: number;
-  averageRiskReward: number;
-  totalPnL: number;
+  unrealizedPnL: number;
 }

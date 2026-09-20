@@ -28,15 +28,25 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Gate: if the risk limits or indicator math are broken, do not trade.
+      - name: Verify risk limits and indicators
+        run: npm run trading-agent:test
+
       - name: Run trading agent
         env:
-          TRADING_API_KEY: ${{ secrets.TRADING_API_KEY }}
-          TRADING_API_SECRET: ${{ secrets.TRADING_API_SECRET }}
-          PAPER_TRADING: ${{ secrets.PAPER_TRADING || 'true' }}
-          MAX_DAILY_LOSS_PERCENT: ${{ secrets.MAX_DAILY_LOSS_PERCENT || '2' }}
-          MAX_POSITION_SIZE_PERCENT: ${{ secrets.MAX_POSITION_SIZE_PERCENT || '5' }}
-          MAX_OPEN_POSITIONS: ${{ secrets.MAX_OPEN_POSITIONS || '5' }}
-          MIN_STOP_LOSS_PERCENT: ${{ secrets.MIN_STOP_LOSS_PERCENT || '1.5' }}
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
+
+          # Defaults here are the safe ones. Add a repository variable only to
+          # deviate; secrets are not needed for non-sensitive limits.
+          PAPER_TRADING: ${{ vars.PAPER_TRADING || 'true' }}
+          CONFIRM_LIVE_TRADING: ${{ secrets.CONFIRM_LIVE_TRADING }}
+          SYMBOLS: ${{ vars.SYMBOLS || 'AAPL,MSFT,GOOGL' }}
+          MAX_DAILY_LOSS_PERCENT: ${{ vars.MAX_DAILY_LOSS_PERCENT || '2' }}
+          MAX_POSITION_SIZE_PERCENT: ${{ vars.MAX_POSITION_SIZE_PERCENT || '5' }}
+          MAX_OPEN_POSITIONS: ${{ vars.MAX_OPEN_POSITIONS || '5' }}
+          MIN_STOP_LOSS_PERCENT: ${{ vars.MIN_STOP_LOSS_PERCENT || '2' }}
+          MIN_CONFIDENCE: ${{ vars.MIN_CONFIDENCE || '0.5' }}
           LOG_PATH: ./logs/trading-agent.log
         run: npm run trading-agent:run
 

@@ -1,269 +1,118 @@
 # Safe Trading Agent
 
-A TypeScript trading agent with built-in risk management, position limits, and
-safety guardrails. Timeframe-agnostic: the same code handles swing and position
-trading depending on how often you schedule it.
+A scheduled trading agent backed by [Alpaca](https://alpaca.markets). Runs on
+GitHub Actions, trades against Alpaca's paper account by default, and enforces
+its risk limits against live broker state.
 
-**Deployment:** runs on GitHub Actions on a schedule you pick. See
-[DEPLOY_GITHUB_ACTIONS.md](./DEPLOY_GITHUB_ACTIONS.md).
+## How it works
 
-**Status:** the strategy in `run.ts` is a scaffold using mock price data. It is
-wired end to end and safe to run, but you must connect a real market-data source
-before it can make meaningful decisions.
+Each scheduled run does one cycle and exits:
 
-## Core Safety Features
+1. Refuses to proceed unless the account is active and the market is open
+2. Reads live equity, cash, buying power and open positions from Alpaca
+3. Fetches daily bars for the configured symbols
+4. Computes RSI (Wilder) and MACD from those bars
+5. Scores each symbol into a buy / sell / hold signal
+6. Validates any non-hold signal against the risk limits
+7. Submits survivors as **bracket orders**, so the stop-loss sits at the broker
 
-### 1. Risk Management
-- Daily loss limits with automatic reset
-- Maximum position size constraints per trade
-- Maximum concurrent open positions limit
-- Minimum stop-loss percentage enforcement
-- Leverage limits
+## Why the stop-loss is a bracket order
 
-### 2. Position Management
-- Automatic stop-loss calculation
-- Position size optimization based on risk
-- Real-time position tracking
-- Forced liquidation on stop-loss
+The agent is not running between scheduled invocations. A stop-loss tracked in
+process would only be checked when the agent happens to wake up, so a position
+could blow straight through it overnight. Submitting the entry and its stop as a
+single bracket order hands the stop to Alpaca, where it stays active whether or
+not this code is running.
 
-### 3. Market Analysis
-- Volatility assessment
-- Trend detection (bullish/bearish/neutral)
-- RSI (Relative Strength Index) monitoring
-- MACD signal analysis
-- Volume verification
+## Risk limits
 
-### 4. Compliance & Logging
-- Comprehensive audit trail of all trades
-- JSON-formatted logs with timestamps
-- Market condition validation
-- Trade rejection reasons logged
-- Paper trading mode for testing
+All of these are checked against Alpaca's reported account state, not against
+locally tracked numbers.
 
-## Configuration
+| Limit | Env var | Default | Effect |
+|---|---|---|---|
+| Daily loss | `MAX_DAILY_LOSS_PERCENT` | 2 | Stops opening positions once the day is down this % of equity |
+| Position size | `MAX_POSITION_SIZE_PERCENT` | 5 | Caps any single position at this % of equity |
+| Open positions | `MAX_OPEN_POSITIONS` | 5 | Refuses new entries beyond this count |
+| Stop-loss | `MIN_STOP_LOSS_PERCENT` | 2 | Distance from entry for the bracket stop |
+| Confidence | `MIN_CONFIDENCE` | 0.5 | Ignores signals weaker than this |
+| Symbols | `SYMBOLS` | AAPL,MSFT,GOOGL | Allowlist; anything else is refused |
 
-```typescript
-const config: TradingConfig = {
-  apiKey: process.env.API_KEY || '',
-  apiSecret: process.env.API_SECRET || '',
-  
-  // CRITICAL: Always use paper trading for testing
-  paperTrading: true,
-  
-  // Risk Management
-  maxDailyLossPercent: 2,           // Stop trading after 2% daily loss
-  maxPositionSizePercent: 5,        // Max 5% of portfolio per position
-  maxOpenPositions: 5,               // Max 5 concurrent trades
-  minStopLossPercent: 1.5,           // Minimum 1.5% stop-loss
-  maxLeverage: 1,                    // No leverage (1x only)
-  
-  // Safety
-  enableRiskManagement: true,
-  enableAutoStopLoss: true,
-  allowedSymbols: ['AAPL', 'MSFT', 'GOOGL'], // Optional whitelist
-};
+Additional hard rules, not configurable:
 
-const agent = new SafeTradingAgent(config, './logs/trading-agent.log');
-```
+- **No shorting.** A sell signal with no existing position is refused, because
+  the position-size limits assume bounded downside.
+- **No averaging up.** A buy signal for a symbol already held is refused.
+- **Sizing is off equity, not buying power.** On a margin account buying power
+  exceeds equity; sizing off equity keeps positions within the configured share
+  of real capital instead of silently trading on leverage.
 
-## Usage Example
+## Paper vs live
 
-```typescript
-import { SafeTradingAgent } from './lib/trading-agent';
+Paper trading is the default and points at `paper-api.alpaca.markets`, which
+uses simulated money. Paper and live accounts have separate API keys.
 
-const config = {
-  apiKey: process.env.TRADING_API_KEY,
-  apiSecret: process.env.TRADING_API_SECRET,
-  paperTrading: true,
-  maxDailyLossPercent: 2,
-  maxPositionSizePercent: 5,
-  maxOpenPositions: 5,
-  minStopLossPercent: 1.5,
-  enableRiskManagement: true,
-  enableAutoStopLoss: true,
-  maxLeverage: 1,
-};
-
-const agent = new SafeTradingAgent(config);
-
-// Analyze market conditions
-const signal = agent.analyzeTradingOpportunity(
-  'AAPL',
-  priceHistory,    // Array of historical prices
-  volumeHistory,   // Array of historical volumes
-  rsiValue,        // RSI indicator (0-100)
-  macdValue        // MACD value
-);
-
-// Execute trade if signal is good
-if (signal.confidence > 0.5) {
-  const trade = await agent.executeTrade(signal, currentPrice);
-  if (trade) {
-    console.log('Trade executed:', trade);
-  }
-}
-
-// Update prices and check stop-losses
-agent.updatePositionPrices(new Map([['AAPL', currentPrice]]));
-const closedTrades = agent.closeLossingPositions(new Map([['AAPL', currentPrice]]));
-
-// Get portfolio status
-const portfolio = agent.getPortfolioState();
-console.log(`Portfolio value: $${portfolio.totalValue}`);
-console.log(`Cash: $${portfolio.cash}`);
-console.log(`Win rate: ${portfolio.winRate.toFixed(2)}%`);
-
-// Get performance metrics
-const metrics = agent.getMetrics();
-console.log(`Sharpe Ratio: ${metrics.sharpeRatio.toFixed(2)}`);
-console.log(`Max Drawdown: ${metrics.maxDrawdown.toFixed(2)}%`);
-console.log(`Total PnL: $${metrics.totalPnL.toFixed(2)}`);
-```
-
-## Safety Checklist Before Going Live
-
-- [ ] Test extensively in paper trading mode
-- [ ] Review all logs for unexpected behavior
-- [ ] Verify risk limits are appropriate for your capital
-- [ ] Set maxDailyLossPercent conservatively (1-3%)
-- [ ] Ensure API credentials are in environment variables
-- [ ] Never hardcode API keys or secrets
-- [ ] Monitor positions in real-time
-- [ ] Have manual kill switch ready
-- [ ] Set position size limits (maxPositionSizePercent 2-5%)
-- [ ] Verify stop-loss functionality with test trades
-- [ ] Understand all configuration parameters
-- [ ] Have backup communication channels setup
-- [ ] Test with minimal capital first
-- [ ] Review and understand the market analyzer logic
-- [ ] Ensure trading within market hours
-
-## Key Classes
-
-### SafeTradingAgent
-Main orchestrator for trading operations. Manages positions, executes trades, and monitors portfolio.
-
-**Key Methods:**
-- `executeTrade()`: Execute a trade with full validation
-- `analyzeTradingOpportunity()`: Generate trading signals
-- `closeLossingPositions()`: Monitor and close positions at stop-loss
-- `getPortfolioState()`: Get current portfolio metrics
-- `getMetrics()`: Calculate performance metrics
-
-### RiskManager
-Enforces all risk constraints and position sizing rules.
-
-**Key Methods:**
-- `validateTrade()`: Pre-trade safety check
-- `validateStopLoss()`: Ensure minimum stop-loss
-- `calculateOptimalPositionSize()`: Kelly-criterion inspired sizing
-- `calculateStopLoss()`: Auto-calculate stop-loss price
-- `updateDailyLoss()`: Track daily losses
-
-### MarketAnalyzer
-Analyzes market conditions and generates trading signals.
-
-**Key Methods:**
-- `analyzeMarketConditions()`: Assess current market state
-- `generateSignal()`: Create buy/sell/hold signals
-- `isTradingConditionFavorable()`: Check if market is suitable for trading
-
-### Logger
-Comprehensive audit trail and debugging logs.
-
-**Key Methods:**
-- `info()`, `warn()`, `error()`: Log events at different levels
-- `readLogs()`: Query historical logs
-- `clearLogs()`: Clear log file
-
-## Trade Signal Structure
-
-```typescript
-interface TradeSignal {
-  symbol: string;
-  action: 'buy' | 'sell' | 'hold';
-  confidence: 0.0 to 1.0;      // Signal strength
-  reason: string;               // Why this signal
-  suggestedQuantity: number;    // How many shares
-  riskLevel: 'low' | 'medium' | 'high';
-}
-```
-
-## Position Structure
-
-```typescript
-interface Position {
-  id: string;
-  symbol: string;
-  quantity: number;
-  entryPrice: number;
-  currentPrice: number;
-  stopLoss: number;
-  takeProfit?: number;
-  createdAt: Date;
-  status: 'open' | 'closed';
-}
-```
-
-## Error Handling
-
-The agent returns validation errors instead of throwing:
-
-```typescript
-const validation = riskManager.validateTrade(...);
-if (!validation.allowed) {
-  console.log('Trade rejected:', validation.reason);
-  // Handle rejection gracefully
-}
-```
-
-## Recommendations
-
-1. **Start in Paper Trading**: Always test strategies with `paperTrading: true`
-2. **Conservative Limits**: Use 1-3% max daily loss initially
-3. **Position Sizing**: Keep individual positions to 2-5% of portfolio
-4. **Monitor Constantly**: Check logs and portfolio state frequently
-5. **Small Capital First**: Start with minimal capital before scaling
-6. **Market Hours Only**: Trade during liquid market hours
-7. **Volatility Watch**: Avoid trading during high volatility spikes
-8. **Regular Reviews**: Audit logs and performance metrics daily
-
-## Limitations
-
-- Uses simple technical indicators (RSI, MACD)
-- Does not include advanced ML models
-- Requires external price/volume data
-- No automatic news sentiment analysis
-- Does not handle market gaps perfectly
-- Limited to margin constraints (1x leverage)
-
-## Environment Variables
+Going live takes **two** independent signals:
 
 ```bash
-TRADING_API_KEY=your_api_key_here
-TRADING_API_SECRET=your_api_secret_here
-TRADING_LOG_PATH=./logs/trading-agent.log
+PAPER_TRADING=false
+CONFIRM_LIVE_TRADING=I_UNDERSTAND_THE_RISK
 ```
 
-Never commit these to version control. Use `.env` or `.env.local`.
+Setting only the first makes the agent refuse to start. This is deliberate: one
+stray edit to a single secret should not be able to point the agent at real
+money.
 
-## Testing
+## Setup
 
-```typescript
-// Test in paper trading mode
-const config = { ...productionConfig, paperTrading: true };
-const agent = new SafeTradingAgent(config);
+```bash
+cp lib/trading-agent/.env.example .env
+# fill in ALPACA_API_KEY and ALPACA_API_SECRET from
+# https://app.alpaca.markets/paper/dashboard/overview
 
-// Make test trades
-const signal = agent.analyzeTradingOpportunity(...);
-const trade = await agent.executeTrade(signal, 150.25);
-
-// Verify behavior
-const portfolio = agent.getPortfolioState();
-console.assert(portfolio.positions.length <= 5, 'Exceeds max positions');
-console.assert(portfolio.totalValue > 0, 'Negative portfolio');
+npm install
+npm run trading-agent:test   # verify risk limits and indicator math
+npm run trading-agent:run    # one cycle
 ```
 
-## License
+For scheduled runs see [DEPLOY_GITHUB_ACTIONS.md](./DEPLOY_GITHUB_ACTIONS.md).
 
-Use at your own risk. This agent is designed for educational purposes and personal use. Always test thoroughly before using with real capital.
+## Tests
+
+`npm run trading-agent:test` covers the two pieces where a silent bug would be
+most expensive:
+
+- **Indicators** — RSI is checked against Wilder's published reference series,
+  plus all-gain / all-loss / flat edge cases; MACD is checked for direction and
+  for collapsing to zero on flat input. Both must throw on insufficient data
+  rather than return a misleading number.
+- **Risk limits** — every gate is asserted to block what it should and to allow
+  what it should, including the boundary either side of the daily loss limit and
+  the margin case where buying power exceeds equity.
+
+The GitHub Actions workflow runs these before trading, so broken risk logic
+stops the run rather than reaching the market.
+
+## What this is not
+
+The strategy is a plain RSI + MACD + trend score. It is a reasonable scaffold,
+not an edge. It has not been backtested, and the confidence number is a weighted
+sum of three indicators, not a probability.
+
+Treat paper trading as the destination until you have your own evidence that the
+strategy is worth anything, not as a step on the way to live.
+
+## Files
+
+| File | Purpose |
+|---|---|
+| `run.ts` | Entry point; one trading cycle |
+| `agent.ts` | Orchestration; ties broker, risk and analysis together |
+| `alpaca-client.ts` | Alpaca REST client |
+| `risk-manager.ts` | Position sizing, stop-loss, all limit checks |
+| `market-analyzer.ts` | Signal generation from indicators |
+| `indicators.ts` | RSI and MACD |
+| `config.ts` | Env loading and the live-trading gate |
+| `logger.ts` | JSON audit log |
+
+See [SAFETY.md](./SAFETY.md) before enabling live trading.

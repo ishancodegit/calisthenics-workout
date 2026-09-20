@@ -1,366 +1,195 @@
-import {
-  TradingConfig,
-  Position,
-  Trade,
-  PortfolioState,
-  MarketConditions,
-  TradeSignal,
-  TradingMetrics,
-} from './types';
+import { TradingConfig, PortfolioState, TradeSignal, Position } from './types';
 import { RiskManager } from './risk-manager';
 import { MarketAnalyzer } from './market-analyzer';
 import { Logger } from './logger';
+import { AlpacaClient, AlpacaOrder } from './alpaca-client';
+import { calculateRSI, calculateMACD, MIN_BARS_REQUIRED } from './indicators';
+
+export interface TradeDecision {
+  signal: TradeSignal;
+  executed: boolean;
+  order?: AlpacaOrder;
+  rejectedReason?: string;
+}
 
 export class SafeTradingAgent {
-  private riskManager: RiskManager;
-  private marketAnalyzer: MarketAnalyzer;
-  private logger: Logger;
-  private positions: Map<string, Position> = new Map();
-  private trades: Trade[] = [];
-  private portfolioValue: number = 100000;
-  private cash: number = 100000;
+  private readonly riskManager: RiskManager;
+  private readonly marketAnalyzer: MarketAnalyzer;
 
   constructor(
-    private config: TradingConfig,
-    logPath?: string
+    private readonly config: TradingConfig,
+    private readonly broker: AlpacaClient,
+    private readonly logger: Logger
   ) {
-    this.riskManager = new RiskManager(config);
-    this.marketAnalyzer = new MarketAnalyzer();
-    this.logger = new Logger(logPath || './trading-agent.log');
-
     this.validateConfig();
     this.logger.info('Trading agent initialized', { config: this.sanitizeConfig(config) });
+    this.riskManager = new RiskManager(config);
+    this.marketAnalyzer = new MarketAnalyzer();
   }
 
-  async executeTrade(signal: TradeSignal, currentPrice: number): Promise<Trade | null> {
-    const portfolioState = this.getPortfolioState();
+  /**
+   * Reads live account and position state from the broker. Risk limits are
+   * meaningless unless they are checked against the real balance, so this is
+   * always fetched fresh rather than tracked in process.
+   */
+  async getPortfolioState(): Promise<PortfolioState> {
+    const [account, brokerPositions] = await Promise.all([
+      this.broker.getAccount(),
+      this.broker.getPositions(),
+    ]);
 
-    if (signal.action === 'hold') {
-      this.logger.info(`Hold signal for ${signal.symbol}`, { confidence: signal.confidence });
-      return null;
-    }
+    const positions: Position[] = brokerPositions.map(p => ({
+      symbol: p.symbol,
+      quantity: p.qty,
+      entryPrice: p.avgEntryPrice,
+      currentPrice: p.currentPrice,
+      marketValue: p.marketValue,
+      unrealizedPnL: p.unrealizedPl,
+      side: p.side,
+    }));
 
-    const validation = this.riskManager.validateTrade(
-      signal.symbol,
-      signal.suggestedQuantity,
-      currentPrice,
-      portfolioState
-    );
-
-    if (!validation.allowed) {
-      this.logger.warn(`Trade rejected: ${signal.symbol}`, { reason: validation.reason });
-      return null;
-    }
-
-    const stopLoss = this.riskManager.calculateStopLoss(
-      currentPrice,
-      signal.action === 'buy'
-    );
-
-    const stopLossValidation = this.riskManager.validateStopLoss(currentPrice, stopLoss);
-    if (!stopLossValidation.valid) {
-      this.logger.warn(`Invalid stop loss: ${signal.symbol}`, {
-        reason: stopLossValidation.reason,
-      });
-      return null;
-    }
-
-    if (this.config.paperTrading) {
-      this.logger.info(`[PAPER] Executing ${signal.action} trade`, {
-        symbol: signal.symbol,
-        quantity: signal.suggestedQuantity,
-        price: currentPrice,
-        stopLoss,
-      });
-    } else {
-      this.logger.info(`[LIVE] Executing ${signal.action} trade`, {
-        symbol: signal.symbol,
-        quantity: signal.suggestedQuantity,
-        price: currentPrice,
-        stopLoss,
-      });
-    }
-
-    const trade = this.createTrade(
-      signal.symbol,
-      signal.action,
-      signal.suggestedQuantity,
-      currentPrice,
-      signal.reason
-    );
-
-    if (signal.action === 'buy') {
-      this.buyPosition(signal.symbol, signal.suggestedQuantity, currentPrice, stopLoss);
-    } else {
-      this.sellPosition(signal.symbol, signal.suggestedQuantity, currentPrice);
-    }
-
-    this.trades.push(trade);
-    return trade;
+    return {
+      equity: account.equity,
+      cash: account.cash,
+      buyingPower: account.buyingPower,
+      positions,
+      dailyPnL: account.equity - account.lastEquity,
+      unrealizedPnL: positions.reduce((sum, p) => sum + p.unrealizedPnL, 0),
+    };
   }
 
-  analyzeTradingOpportunity(
-    symbol: string,
-    priceHistory: number[],
-    volumeHistory: number[],
-    rsi: number,
-    macd: number
-  ): TradeSignal {
-    const marketConditions = this.marketAnalyzer.analyzeMarketConditions(
-      priceHistory,
-      volumeHistory,
-      rsi,
-      macd
-    );
+  /**
+   * Refuses to trade unless the broker says the account is in good standing
+   * and the market is open. Returns the reason when it refuses.
+   */
+  async checkTradingAllowed(): Promise<{ allowed: boolean; reason?: string }> {
+    const [account, clock] = await Promise.all([
+      this.broker.getAccount(),
+      this.broker.getClock(),
+    ]);
 
-    if (!this.marketAnalyzer.isTradingConditionFavorable(marketConditions)) {
-      this.logger.warn(`Unfavorable trading conditions for ${symbol}`, {
-        volatility: marketConditions.volatility,
-        volume: marketConditions.volume,
-      });
+    if (account.accountBlocked) return { allowed: false, reason: 'Account is blocked' };
+    if (account.tradingBlocked) return { allowed: false, reason: 'Trading is blocked on this account' };
+    if (account.tradeSuspendedByUser) return { allowed: false, reason: 'Trading suspended by user' };
+    if (account.status !== 'ACTIVE') return { allowed: false, reason: `Account status is ${account.status}` };
+    if (!clock.isOpen) return { allowed: false, reason: `Market closed until ${clock.nextOpen}` };
+
+    return { allowed: true };
+  }
+
+  analyzeSymbol(symbol: string, closes: number[], volumes: number[]): TradeSignal {
+    if (closes.length < MIN_BARS_REQUIRED) {
       return {
         symbol,
         action: 'hold',
         confidence: 0,
-        reason: 'Unfavorable market conditions',
-        suggestedQuantity: 0,
+        reason: `Insufficient history (${closes.length}/${MIN_BARS_REQUIRED} bars)`,
         riskLevel: 'high',
       };
     }
 
-    return this.marketAnalyzer.generateSignal(symbol, marketConditions, priceHistory);
+    const rsi = calculateRSI(closes);
+    const { histogram } = calculateMACD(closes);
+    const conditions = this.marketAnalyzer.analyzeMarketConditions(closes, volumes, rsi, histogram);
+
+    const favorable = this.marketAnalyzer.isTradingConditionFavorable(conditions);
+    if (!favorable.ok) {
+      return {
+        symbol,
+        action: 'hold',
+        confidence: 0,
+        reason: favorable.reason!,
+        riskLevel: 'high',
+      };
+    }
+
+    return this.marketAnalyzer.generateSignal(symbol, conditions);
   }
 
-  closeLossingPositions(currentPrices: Map<string, number>): Trade[] {
-    const closedTrades: Trade[] = [];
+  /**
+   * Validates a signal against live account state and, if it passes, submits a
+   * bracket order so the stop-loss is held by the broker rather than by this
+   * process, which is not running between scheduled invocations.
+   */
+  async executeSignal(
+    signal: TradeSignal,
+    currentPrice: number,
+    portfolio: PortfolioState
+  ): Promise<TradeDecision> {
+    if (signal.action === 'hold') {
+      return { signal, executed: false, rejectedReason: 'Hold signal' };
+    }
 
-    for (const [symbol, position] of this.positions) {
-      const currentPrice = currentPrices.get(symbol);
-      if (!currentPrice) continue;
-
-      if (currentPrice <= position.stopLoss) {
-        this.logger.warn(`Stop loss triggered for ${symbol}`, {
-          entryPrice: position.entryPrice,
-          stopLoss: position.stopLoss,
-          currentPrice,
-          loss: currentPrice - position.entryPrice,
-        });
-
-        const trade = this.createTrade(
-          symbol,
-          'sell',
-          position.quantity,
-          currentPrice,
-          'Stop loss triggered'
-        );
-
-        this.cash += currentPrice * position.quantity;
-        position.status = 'closed';
-        closedTrades.push(trade);
-        this.trades.push(trade);
+    // Only long entries are supported. Shorting has a different risk profile
+    // (unbounded loss) that these limits are not designed for.
+    if (signal.action === 'sell') {
+      const held = portfolio.positions.find(p => p.symbol === signal.symbol);
+      if (!held) {
+        return { signal, executed: false, rejectedReason: 'Sell signal with no open position; shorting is disabled' };
       }
     }
 
-    return closedTrades;
-  }
+    const stopLoss = this.riskManager.calculateStopLoss(currentPrice, signal.action === 'buy');
+    const quantity = this.riskManager.calculatePositionSize(portfolio.equity, currentPrice);
 
-  getPortfolioState(): PortfolioState {
-    const openPositions = Array.from(this.positions.values()).filter(p => p.status === 'open');
-    const positionValue = openPositions.reduce((sum, p) => sum + p.currentPrice * p.quantity, 0);
-    const totalValue = this.cash + positionValue;
+    if (quantity < 1) {
+      return {
+        signal,
+        executed: false,
+        rejectedReason: `Position size rounds to ${quantity} shares at $${currentPrice.toFixed(2)}`,
+      };
+    }
 
-    const winningTrades = this.trades.filter(t => {
-      const matchingPosition = openPositions.find(p => p.symbol === t.symbol);
-      return matchingPosition && matchingPosition.currentPrice > t.price;
+    const validation = this.riskManager.validateTrade(signal, quantity, currentPrice, portfolio);
+    if (!validation.allowed) {
+      this.logger.warn(`Trade rejected: ${signal.symbol}`, { reason: validation.reason });
+      return { signal, executed: false, rejectedReason: validation.reason };
+    }
+
+    this.logger.info(`Submitting ${signal.action} order`, {
+      symbol: signal.symbol,
+      quantity,
+      price: currentPrice,
+      stopLoss: Number(stopLoss.toFixed(2)),
+      paperTrading: this.broker.isPaperTrading(),
     });
 
-    return {
-      totalValue,
-      cash: this.cash,
-      positions: openPositions,
-      dailyPnL: this.calculateDailyPnL(),
-      winRate: this.trades.length > 0 ? (winningTrades.length / this.trades.length) * 100 : 0,
-      totalTrades: this.trades.length,
-    };
-  }
+    const order = await this.broker.submitBracketOrder({
+      symbol: signal.symbol,
+      qty: quantity,
+      side: signal.action,
+      stopLossPrice: stopLoss,
+    });
 
-  getMetrics(): TradingMetrics {
-    const portfolioState = this.getPortfolioState();
+    this.logger.info(`Order accepted: ${signal.symbol}`, {
+      orderId: order.id,
+      status: order.status,
+      qty: order.qty,
+    });
 
-    return {
-      maxDrawdown: this.calculateMaxDrawdown(),
-      sharpeRatio: this.calculateSharpeRatio(),
-      winRate: portfolioState.winRate,
-      averageRiskReward: this.calculateAverageRiskReward(),
-      totalPnL: portfolioState.totalValue - 100000,
-    };
-  }
-
-  updatePositionPrices(currentPrices: Map<string, number>): void {
-    for (const [symbol, position] of this.positions) {
-      const currentPrice = currentPrices.get(symbol);
-      if (currentPrice) {
-        position.currentPrice = currentPrice;
-      }
-    }
-  }
-
-  private buyPosition(
-    symbol: string,
-    quantity: number,
-    price: number,
-    stopLoss: number
-  ): void {
-    const cost = quantity * price;
-    if (cost > this.cash) {
-      this.logger.warn(`Insufficient funds for ${symbol}`, { available: this.cash, needed: cost });
-      return;
-    }
-
-    this.cash -= cost;
-    const position: Position = {
-      id: `${symbol}-${Date.now()}`,
-      symbol,
-      quantity,
-      entryPrice: price,
-      currentPrice: price,
-      stopLoss,
-      createdAt: new Date(),
-      status: 'open',
-    };
-
-    this.positions.set(symbol, position);
-    this.logger.info(`Position opened: ${symbol}`, { quantity, price, stopLoss });
-  }
-
-  private sellPosition(symbol: string, quantity: number, price: number): void {
-    const position = this.positions.get(symbol);
-    if (!position) {
-      this.logger.warn(`No position to sell for ${symbol}`);
-      return;
-    }
-
-    const proceeds = quantity * price;
-    this.cash += proceeds;
-    position.quantity -= quantity;
-
-    if (position.quantity <= 0) {
-      position.status = 'closed';
-    }
-
-    this.logger.info(`Position reduced: ${symbol}`, { quantity, price, remaining: position.quantity });
-  }
-
-  private createTrade(
-    symbol: string,
-    type: 'buy' | 'sell',
-    quantity: number,
-    price: number,
-    reason: string
-  ): Trade {
-    return {
-      id: `${symbol}-${type}-${Date.now()}`,
-      symbol,
-      type,
-      quantity,
-      price,
-      timestamp: new Date(),
-      reason,
-      paperTrading: this.config.paperTrading,
-    };
-  }
-
-  private calculateDailyPnL(): number {
-    const today = new Date().toDateString();
-    const todaysTrades = this.trades.filter(t => t.timestamp.toDateString() === today);
-    let pnl = 0;
-
-    for (let i = 0; i < todaysTrades.length; i += 2) {
-      const buyTrade = todaysTrades[i];
-      const sellTrade = todaysTrades[i + 1];
-
-      if (sellTrade) {
-        pnl += (sellTrade.price - buyTrade.price) * buyTrade.quantity;
-      }
-    }
-
-    return pnl;
-  }
-
-  private calculateMaxDrawdown(): number {
-    if (this.trades.length === 0) return 0;
-
-    let peak = 100000;
-    let maxDD = 0;
-    let currentValue = 100000;
-
-    for (const trade of this.trades) {
-      if (trade.type === 'sell') {
-        const pnl = (trade.price - trade.price) * trade.quantity;
-        currentValue += pnl;
-      }
-
-      if (currentValue > peak) peak = currentValue;
-
-      const drawdown = ((peak - currentValue) / peak) * 100;
-      if (drawdown > maxDD) maxDD = drawdown;
-    }
-
-    return maxDD;
-  }
-
-  private calculateSharpeRatio(): number {
-    if (this.trades.length < 2) return 0;
-
-    const returns = [];
-    for (let i = 1; i < this.trades.length; i++) {
-      const prevValue = this.trades[i - 1].price * this.trades[i - 1].quantity;
-      const currValue = this.trades[i].price * this.trades[i].quantity;
-      returns.push((currValue - prevValue) / prevValue);
-    }
-
-    const avgReturn = returns.reduce((a, b) => a + b) / returns.length;
-    const variance = returns.reduce((sq, r) => sq + Math.pow(r - avgReturn, 2), 0) / returns.length;
-    const stdDev = Math.sqrt(variance);
-
-    return stdDev > 0 ? (avgReturn / stdDev) * Math.sqrt(252) : 0;
-  }
-
-  private calculateAverageRiskReward(): number {
-    if (this.trades.length === 0) return 0;
-
-    const positions = Array.from(this.positions.values());
-    const totalRiskReward = positions.reduce((sum, p) => {
-      const risk = Math.abs(p.entryPrice - p.stopLoss);
-      const reward = p.takeProfit ? Math.abs(p.takeProfit - p.entryPrice) : risk;
-      return sum + reward / risk;
-    }, 0);
-
-    return positions.length > 0 ? totalRiskReward / positions.length : 0;
+    return { signal, executed: true, order };
   }
 
   private validateConfig(): void {
-    if (this.config.maxDailyLossPercent <= 0 || this.config.maxDailyLossPercent > 100) {
+    const { maxDailyLossPercent, maxPositionSizePercent, maxOpenPositions, minStopLossPercent } =
+      this.config;
+
+    if (!(maxDailyLossPercent > 0 && maxDailyLossPercent <= 100)) {
       throw new Error('maxDailyLossPercent must be between 0 and 100');
     }
-
-    if (this.config.maxPositionSizePercent <= 0 || this.config.maxPositionSizePercent > 100) {
+    if (!(maxPositionSizePercent > 0 && maxPositionSizePercent <= 100)) {
       throw new Error('maxPositionSizePercent must be between 0 and 100');
     }
-
-    if (this.config.maxOpenPositions <= 0) {
+    if (!(maxOpenPositions > 0)) {
       throw new Error('maxOpenPositions must be positive');
     }
-
-    if (this.config.minStopLossPercent <= 0) {
+    if (!(minStopLossPercent > 0)) {
       throw new Error('minStopLossPercent must be positive');
     }
   }
 
-  private sanitizeConfig(config: TradingConfig): Partial<TradingConfig> {
-    const sanitized = { ...config };
-    delete (sanitized as any).apiKey;
-    delete (sanitized as any).apiSecret;
-    return sanitized;
+  private sanitizeConfig(config: TradingConfig): Record<string, unknown> {
+    const { apiKey, apiSecret, ...safe } = config;
+    return safe;
   }
 }

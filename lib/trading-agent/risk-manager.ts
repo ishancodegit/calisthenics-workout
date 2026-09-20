@@ -1,129 +1,89 @@
-import { Position, TradingConfig, PortfolioState } from './types';
+import { TradingConfig, PortfolioState, TradeSignal } from './types';
+
+export interface RiskDecision {
+  allowed: boolean;
+  reason?: string;
+}
 
 export class RiskManager {
-  private dailyLoss: number = 0;
-  private dailyLossResetTime: Date = new Date();
+  constructor(private readonly config: TradingConfig) {}
 
-  constructor(private config: TradingConfig) {
-    this.resetDailyLoss();
-  }
-
+  /**
+   * Every check runs against live broker state, so the daily loss limit is
+   * measured from the account's own equity change rather than from trades this
+   * process happens to remember.
+   */
   validateTrade(
-    symbol: string,
+    signal: TradeSignal,
     quantity: number,
     price: number,
-    portfolioState: PortfolioState
-  ): { allowed: boolean; reason?: string } {
-    if (!this.config.enableRiskManagement) {
-      return { allowed: true };
-    }
-
-    if (this.isDailyLossTooHigh(portfolioState.totalValue)) {
+    portfolio: PortfolioState
+  ): RiskDecision {
+    const dailyLossLimit = -(portfolio.equity * this.config.maxDailyLossPercent) / 100;
+    if (portfolio.dailyPnL <= dailyLossLimit) {
       return {
         allowed: false,
-        reason: `Daily loss limit (${this.config.maxDailyLossPercent}%) exceeded`,
+        reason: `Daily loss ${portfolio.dailyPnL.toFixed(2)} hit limit ${dailyLossLimit.toFixed(2)} (${this.config.maxDailyLossPercent}% of equity)`,
       };
     }
 
-    if (
-      portfolioState.positions.length >=
-      this.config.maxOpenPositions
-    ) {
+    if (signal.confidence < this.config.minConfidence) {
       return {
         allowed: false,
-        reason: `Max open positions (${this.config.maxOpenPositions}) reached`,
+        reason: `Confidence ${signal.confidence.toFixed(2)} below threshold ${this.config.minConfidence}`,
       };
     }
 
-    const positionValue = quantity * price;
-    const positionPercent = (positionValue / portfolioState.totalValue) * 100;
+    const alreadyHeld = portfolio.positions.some(p => p.symbol === signal.symbol);
 
-    if (positionPercent > this.config.maxPositionSizePercent) {
-      return {
-        allowed: false,
-        reason: `Position size (${positionPercent.toFixed(2)}%) exceeds max (${this.config.maxPositionSizePercent}%)`,
-      };
+    if (signal.action === 'buy') {
+      if (alreadyHeld) {
+        return { allowed: false, reason: `Already holding ${signal.symbol}; no averaging up` };
+      }
+
+      if (portfolio.positions.length >= this.config.maxOpenPositions) {
+        return {
+          allowed: false,
+          reason: `At max open positions (${this.config.maxOpenPositions})`,
+        };
+      }
+
+      const cost = quantity * price;
+
+      if (cost > portfolio.buyingPower) {
+        return {
+          allowed: false,
+          reason: `Cost ${cost.toFixed(2)} exceeds buying power ${portfolio.buyingPower.toFixed(2)}`,
+        };
+      }
+
+      // Buying power can exceed equity on a margin account. Sizing off equity
+      // keeps the position within the configured share of real capital
+      // instead of silently trading on leverage.
+      const maxCost = (portfolio.equity * this.config.maxPositionSizePercent) / 100;
+      if (cost > maxCost) {
+        return {
+          allowed: false,
+          reason: `Cost ${cost.toFixed(2)} exceeds max position size ${maxCost.toFixed(2)} (${this.config.maxPositionSizePercent}% of equity)`,
+        };
+      }
     }
 
-    if (this.config.allowedSymbols && !this.config.allowedSymbols.includes(symbol)) {
-      return {
-        allowed: false,
-        reason: `${symbol} not in allowed symbols list`,
-      };
+    if (!this.config.symbols.includes(signal.symbol)) {
+      return { allowed: false, reason: `${signal.symbol} is not in the configured symbol list` };
     }
 
     return { allowed: true };
   }
 
-  validateStopLoss(
-    entryPrice: number,
-    stopLoss: number
-  ): { valid: boolean; reason?: string } {
-    const stopLossPercent = Math.abs((stopLoss - entryPrice) / entryPrice) * 100;
-
-    if (stopLossPercent < this.config.minStopLossPercent) {
-      return {
-        valid: false,
-        reason: `Stop loss (${stopLossPercent.toFixed(2)}%) below minimum (${this.config.minStopLossPercent}%)`,
-      };
-    }
-
-    return { valid: true };
+  /** Whole shares that fit inside maxPositionSizePercent of equity. */
+  calculatePositionSize(equity: number, price: number): number {
+    const budget = (equity * this.config.maxPositionSizePercent) / 100;
+    return Math.floor(budget / price);
   }
 
-  calculateOptimalPositionSize(
-    accountValue: number,
-    riskPercent: number,
-    stopLossPercent: number
-  ): number {
-    const riskAmount = (accountValue * riskPercent) / 100;
-    const positionSize = riskAmount / (stopLossPercent / 100);
-    const maxSize = (accountValue * this.config.maxPositionSizePercent) / 100;
-
-    return Math.min(positionSize, maxSize);
-  }
-
-  calculateStopLoss(
-    entryPrice: number,
-    isLongPosition: boolean
-  ): number {
-    const stopLossPercent = this.config.minStopLossPercent;
-
-    if (isLongPosition) {
-      return entryPrice * (1 - stopLossPercent / 100);
-    } else {
-      return entryPrice * (1 + stopLossPercent / 100);
-    }
-  }
-
-  updateDailyLoss(loss: number): void {
-    this.resetDailyLossIfNeeded();
-    this.dailyLoss += loss;
-  }
-
-  private isDailyLossTooHigh(portfolioValue: number): boolean {
-    const maxDailyLoss = (portfolioValue * this.config.maxDailyLossPercent) / 100;
-    return this.dailyLoss > maxDailyLoss;
-  }
-
-  private resetDailyLossIfNeeded(): void {
-    const now = new Date();
-    const daysSinceReset = Math.floor(
-      (now.getTime() - this.dailyLossResetTime.getTime()) / (1000 * 60 * 60 * 24)
-    );
-
-    if (daysSinceReset >= 1) {
-      this.resetDailyLoss();
-    }
-  }
-
-  private resetDailyLoss(): void {
-    this.dailyLoss = 0;
-    this.dailyLossResetTime = new Date();
-  }
-
-  getDailyLoss(): number {
-    this.resetDailyLossIfNeeded();
-    return this.dailyLoss;
+  calculateStopLoss(entryPrice: number, isLong: boolean): number {
+    const offset = (entryPrice * this.config.minStopLossPercent) / 100;
+    return isLong ? entryPrice - offset : entryPrice + offset;
   }
 }

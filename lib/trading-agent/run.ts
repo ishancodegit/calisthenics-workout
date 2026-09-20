@@ -1,95 +1,89 @@
-import { SafeTradingAgent, TradingConfig } from './index';
-import * as fs from 'fs';
-import * as path from 'path';
+import { SafeTradingAgent } from './agent';
+import { AlpacaClient } from './alpaca-client';
+import { Logger } from './logger';
+import { loadConfig } from './config';
 
-/**
- * Single trading cycle runner for GitHub Actions or scheduled execution
- * Executes once per scheduled run, then exits
- */
+const LOG_PATH = process.env.LOG_PATH ?? './logs/trading-agent.log';
+const BARS_TO_FETCH = 120;
 
-const LOG_PATH = process.env.LOG_PATH || './logs/trading-agent.log';
+async function main(): Promise<number> {
+  const config = loadConfig();
+  const logger = new Logger(LOG_PATH);
+  const broker = new AlpacaClient(config.apiKey, config.apiSecret, config.paperTrading);
+  const agent = new SafeTradingAgent(config, broker, logger);
 
-// Ensure logs directory exists
-const logsDir = path.dirname(LOG_PATH);
-if (!fs.existsSync(logsDir)) {
-  fs.mkdirSync(logsDir, { recursive: true });
-}
+  console.log('='.repeat(64));
+  console.log(`Trading Agent  |  ${config.paperTrading ? 'PAPER' : 'LIVE'}  |  ${new Date().toISOString()}`);
+  console.log('='.repeat(64));
 
-const config: TradingConfig = {
-  apiKey: process.env.TRADING_API_KEY || '',
-  apiSecret: process.env.TRADING_API_SECRET || '',
-  paperTrading: process.env.PAPER_TRADING !== 'false',
-  maxDailyLossPercent: parseFloat(process.env.MAX_DAILY_LOSS_PERCENT || '2'),
-  maxPositionSizePercent: parseFloat(process.env.MAX_POSITION_SIZE_PERCENT || '5'),
-  maxOpenPositions: parseInt(process.env.MAX_OPEN_POSITIONS || '5'),
-  minStopLossPercent: parseFloat(process.env.MIN_STOP_LOSS_PERCENT || '1.5'),
-  enableAutoStopLoss: process.env.ENABLE_AUTO_STOP_LOSS !== 'false',
-  enableRiskManagement: process.env.ENABLE_RISK_MANAGEMENT !== 'false',
-  maxLeverage: parseFloat(process.env.MAX_LEVERAGE || '1'),
-  allowedSymbols: process.env.ALLOWED_SYMBOLS ? process.env.ALLOWED_SYMBOLS.split(',') : undefined,
-};
-
-async function runTradingCycle() {
-  console.log('='.repeat(60));
-  console.log('📈 Trading Agent - Scheduled Run');
-  console.log(`⏰ ${new Date().toISOString()}`);
-  console.log(`📊 Mode: ${config.paperTrading ? 'PAPER TRADING' : 'LIVE TRADING'}`);
-  console.log('='.repeat(60));
-  console.log('');
-
-  const agent = new SafeTradingAgent(config, LOG_PATH);
-
-  try {
-    // Example: Check portfolio status
-    const portfolio = agent.getPortfolioState();
-    console.log('📊 Portfolio Status:');
-    console.log(`  Total Value: $${portfolio.totalValue.toFixed(2)}`);
-    console.log(`  Cash: $${portfolio.cash.toFixed(2)}`);
-    console.log(`  Open Positions: ${portfolio.positions.length}`);
-    console.log(`  Daily PnL: $${portfolio.dailyPnL.toFixed(2)}`);
-    console.log(`  Win Rate: ${portfolio.winRate.toFixed(1)}%`);
-    console.log('');
-
-    // Example: Analyze a symbol
-    const symbol = 'AAPL';
-    const mockPrices = [150, 151, 152, 151.5, 153];
-    const mockVolumes = [2000000, 2100000, 2200000, 2150000, 2300000];
-
-    console.log(`📍 Analyzing ${symbol}...`);
-    const signal = agent.analyzeTradingOpportunity(symbol, mockPrices, mockVolumes, 45, 0.5);
-
-    console.log(`  Action: ${signal.action}`);
-    console.log(`  Confidence: ${(signal.confidence * 100).toFixed(0)}%`);
-    console.log(`  Risk Level: ${signal.riskLevel}`);
-    console.log(`  Reason: ${signal.reason}`);
-    console.log('');
-
-    // In production, you would:
-    // 1. Fetch real price data from your broker API
-    // 2. Analyze multiple symbols
-    // 3. Execute trades for strong signals
-    // 4. Monitor existing positions
-    // 5. Check stop-losses
-
-    const metrics = agent.getMetrics();
-    console.log('📈 Performance Metrics:');
-    console.log(`  Sharpe Ratio: ${metrics.sharpeRatio.toFixed(3)}`);
-    console.log(`  Max Drawdown: ${metrics.maxDrawdown.toFixed(2)}%`);
-    console.log(`  Total PnL: $${metrics.totalPnL.toFixed(2)}`);
-    console.log(`  Win Rate: ${metrics.winRate.toFixed(1)}%`);
-    console.log('');
-
-    console.log('✅ Trading cycle completed successfully');
-    console.log(`📝 Logs saved to: ${LOG_PATH}`);
-    console.log('');
-
-    process.exit(0);
-  } catch (error) {
-    console.error('❌ Error during trading cycle:', error);
-    console.error('');
-    process.exit(1);
+  const permission = await agent.checkTradingAllowed();
+  if (!permission.allowed) {
+    console.log(`\nNot trading: ${permission.reason}`);
+    logger.info('Trading skipped', { reason: permission.reason });
+    return 0;
   }
+
+  const portfolio = await agent.getPortfolioState();
+  console.log('\nAccount');
+  console.log(`  Equity:        $${portfolio.equity.toFixed(2)}`);
+  console.log(`  Cash:          $${portfolio.cash.toFixed(2)}`);
+  console.log(`  Buying power:  $${portfolio.buyingPower.toFixed(2)}`);
+  console.log(`  Day P&L:       $${portfolio.dailyPnL.toFixed(2)}`);
+  console.log(`  Unrealized:    $${portfolio.unrealizedPnL.toFixed(2)}`);
+  console.log(`  Positions:     ${portfolio.positions.length}/${config.maxOpenPositions}`);
+
+  for (const p of portfolio.positions) {
+    console.log(
+      `    ${p.symbol.padEnd(6)} ${String(p.quantity).padStart(5)} @ $${p.entryPrice.toFixed(2)}` +
+        `  now $${p.currentPrice.toFixed(2)}  P&L $${p.unrealizedPnL.toFixed(2)}`
+    );
+  }
+
+  const bars = await broker.getBars(config.symbols, '1Day', BARS_TO_FETCH);
+
+  console.log('\nSignals');
+  let submitted = 0;
+
+  for (const symbol of config.symbols) {
+    const symbolBars = bars.get(symbol);
+
+    if (!symbolBars?.length) {
+      console.log(`  ${symbol.padEnd(6)} no market data returned`);
+      logger.warn(`No bars for ${symbol}`);
+      continue;
+    }
+
+    const closes = symbolBars.map(b => b.close);
+    const volumes = symbolBars.map(b => b.volume);
+    const lastPrice = closes[closes.length - 1];
+
+    const signal = agent.analyzeSymbol(symbol, closes, volumes);
+    console.log(
+      `  ${symbol.padEnd(6)} ${signal.action.toUpperCase().padEnd(5)} ` +
+        `conf ${(signal.confidence * 100).toFixed(0).padStart(3)}%  ` +
+        `risk ${signal.riskLevel.padEnd(6)}  ${signal.reason}`
+    );
+
+    const decision = await agent.executeSignal(signal, lastPrice, portfolio);
+
+    if (decision.executed) {
+      submitted++;
+      console.log(`         -> order ${decision.order!.id} (${decision.order!.status})`);
+    } else if (signal.action !== 'hold') {
+      console.log(`         -> skipped: ${decision.rejectedReason}`);
+    }
+  }
+
+  console.log(`\n${submitted} order(s) submitted. Logs: ${LOG_PATH}`);
+  return 0;
 }
 
-// Run the trading cycle
-runTradingCycle();
+main()
+  .then(code => process.exit(code))
+  .catch((error: unknown) => {
+    // Credentials live in this process; print only the message, never the error
+    // object, which can carry request context.
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`\nTrading cycle failed: ${message}`);
+    process.exit(1);
+  });
