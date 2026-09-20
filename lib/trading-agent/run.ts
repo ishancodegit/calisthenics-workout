@@ -16,11 +16,13 @@ async function main(): Promise<number> {
   console.log(`Trading Agent  |  ${config.paperTrading ? 'PAPER' : 'LIVE'}  |  ${new Date().toISOString()}`);
   console.log('='.repeat(64));
 
+  // A closed market stops execution, not analysis. Seeing what the agent would
+  // have done is the useful part of an off-hours run.
   const permission = await agent.checkTradingAllowed();
   if (!permission.allowed) {
-    console.log(`\nNot trading: ${permission.reason}`);
-    logger.info('Trading skipped', { reason: permission.reason });
-    return 0;
+    console.log(`\nExecution disabled: ${permission.reason}`);
+    console.log('Continuing in read-only mode; no orders will be submitted.');
+    logger.info('Execution disabled', { reason: permission.reason });
   }
 
   const portfolio = await agent.getPortfolioState();
@@ -64,6 +66,13 @@ async function main(): Promise<number> {
         `risk ${signal.riskLevel.padEnd(6)}  ${signal.reason}`
     );
 
+    if (!permission.allowed) {
+      if (signal.action !== 'hold') {
+        console.log(`         -> would ${signal.action}, but execution is disabled`);
+      }
+      continue;
+    }
+
     const decision = await agent.executeSignal(signal, lastPrice, portfolio);
 
     if (decision.executed) {
@@ -74,7 +83,11 @@ async function main(): Promise<number> {
     }
   }
 
-  console.log(`\n${submitted} order(s) submitted. Logs: ${LOG_PATH}`);
+  console.log(
+    permission.allowed
+      ? `\n${submitted} order(s) submitted. Logs: ${LOG_PATH}`
+      : `\nRead-only run, no orders submitted. Logs: ${LOG_PATH}`
+  );
   return 0;
 }
 

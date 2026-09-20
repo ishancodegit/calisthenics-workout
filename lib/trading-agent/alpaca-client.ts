@@ -123,34 +123,60 @@ export class AlpacaClient {
     };
   }
 
+  /**
+   * Returns the most recent `limit` bars per symbol, oldest first.
+   *
+   * `start` must be set explicitly: it otherwise defaults to the beginning of
+   * the current day, which yields nothing on a weekend or before the open.
+   * Fetching descending and reversing gets the latest bars regardless of how
+   * far back `start` reaches.
+   */
   async getBars(symbols: string[], timeframe: string, limit: number): Promise<Map<string, Bar[]>> {
+    const entries = await Promise.all(
+      symbols.map(async symbol => [symbol, await this.getBarsForSymbol(symbol, timeframe, limit)] as const)
+    );
+
+    return new Map(entries.filter(([, bars]) => bars.length > 0));
+  }
+
+  /**
+   * Most recent `limit` bars for one symbol, oldest first.
+   *
+   * Queried per symbol on purpose. The multi-symbol form shares one `limit`
+   * across the whole response and fills it symbol by symbol, so a single
+   * request silently returns everything for the first symbol and nothing for
+   * the rest unless you page through.
+   *
+   * `start` must also be explicit: it defaults to the beginning of the current
+   * day, which yields nothing on a weekend or before the open.
+   */
+  private async getBarsForSymbol(symbol: string, timeframe: string, limit: number): Promise<Bar[]> {
+    const start = new Date();
+    start.setFullYear(start.getFullYear() - 2);
+
     const params = new URLSearchParams({
-      symbols: symbols.join(','),
+      symbols: symbol,
       timeframe,
+      start: start.toISOString().slice(0, 10),
       limit: String(limit),
       feed: 'iex',
       adjustment: 'split',
-      sort: 'asc',
+      sort: 'desc',
     });
 
     const data = await this.request(MARKET_DATA_URL, `/v2/stocks/bars?${params}`);
-    const result = new Map<string, Bar[]>();
+    const bars: any[] = data.bars?.[symbol] ?? [];
 
-    for (const [symbol, bars] of Object.entries(data.bars ?? {})) {
-      result.set(
-        symbol,
-        (bars as any[]).map(b => ({
-          timestamp: b.t,
-          open: b.o,
-          high: b.h,
-          low: b.l,
-          close: b.c,
-          volume: b.v,
-        }))
-      );
-    }
-
-    return result;
+    return bars
+      .map(b => ({
+        timestamp: b.t,
+        open: b.o,
+        high: b.h,
+        low: b.l,
+        close: b.c,
+        volume: b.v,
+      }))
+      .reverse();
   }
 
   /**

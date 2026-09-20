@@ -37,7 +37,11 @@ export class Logger {
     };
 
     const logString = JSON.stringify(entry);
-    console.log(`[${level.toUpperCase()}] ${message}`, data);
+    if (data === undefined) {
+      console.log(`[${level.toUpperCase()}] ${message}`);
+    } else {
+      console.log(`[${level.toUpperCase()}] ${message}`, data);
+    }
 
     try {
       fs.appendFileSync(this.logPath, logString + '\n', 'utf-8');
