@@ -1,5 +1,7 @@
 # Calisthenics Workout
 
+> **Also in this repo:** [`ios/Assassins`](ios/Assassins), a real-world battle royale iPhone app to play with friends (outdoor or indoor, with or without Nerf guns). See its README for setup.
+
 A personal workout runner built from the *Beginner Calisthenics Program* PDF. Black/yellow theme matching the program, with countdown timers for timed holds and automatic rest timers between every set.
 
 ## Features

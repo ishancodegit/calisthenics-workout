@@ -1,4 +1,4 @@
-name: Manhunt
+name: Assassins
 options:
   bundleIdPrefix: com.example
   deploymentTarget:
@@ -9,18 +9,18 @@ packages:
     url: https://github.com/firebase/firebase-ios-sdk
     from: "11.0.0"
 targets:
-  Manhunt:
+  Assassins:
     type: application
     platform: iOS
     sources:
-      - path: Manhunt
+      - path: Assassins
     dependencies:
       - package: Firebase
         product: FirebaseFirestore
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.manhunt
-        INFOPLIST_FILE: Manhunt/Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.assassins
+        INFOPLIST_FILE: Assassins/Info.plist
         GENERATE_INFOPLIST_FILE: NO
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"

@@ -1,0 +1,15 @@
+rules_version = '2';
+
+// Simple rules for playing with friends: anyone with a lobby code can read
+// and write that game (players, Nerf hit claims, everything under it).
+// Fine for a private friends app. Lock it down before a public release.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /games/{code} {
+      allow read, write: if true;
+      match /{document=**} {
+        allow read, write: if true;
+      }
+    }
+  }
+}
