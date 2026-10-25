@@ -219,6 +219,19 @@ function Home({
         <span className="text-2xl font-black">▸</span>
       </button>
 
+      <a
+        href="/assassins"
+        className="mt-3 flex w-full items-center justify-between rounded-2xl bg-[#2a1458] p-5 text-left transition active:scale-[0.99]"
+      >
+        <span>
+          <span className="block text-lg font-black">🎯 Assassins</span>
+          <span className="block text-sm font-medium text-white/70">
+            Real-world battle royale with friends, storm included
+          </span>
+        </span>
+        <span className="text-2xl font-black">▸</span>
+      </a>
+
       {/* Pick a session */}
       <div className="mt-8">
         <SectionTitle>Start a Session</SectionTitle>

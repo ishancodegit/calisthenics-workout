@@ -23,3 +23,6 @@ body {
   100% { transform: scale(0.97); }
 }
 .timer-pulse { animation: pulse-ring 2s ease-in-out infinite; }
+
+/* Assassins storm map: dark OpenStreetMap tiles */
+.storm-tiles { filter: invert(1) hue-rotate(200deg) brightness(0.9) contrast(0.9) saturate(0.6); }
